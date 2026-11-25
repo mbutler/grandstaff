@@ -67,6 +67,7 @@
       <div class="flex items-center bg-studio-950 p-1 rounded-xl border border-studio-700/80">
         <button data-app="staff" class="app-btn px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium">Staff</button>
         <button data-app="chords" class="app-btn px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium">Chords</button>
+        <button data-app="scales" class="app-btn px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium">Scales</button>
         <button data-app="count" class="app-btn px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium">Count</button>
       </div>
 
@@ -137,6 +138,18 @@
       <p class="text-[11px] text-slate-400 max-w-sm">Play the right-hand shape. The next new shape joins after you have met the one in front of it.</p>
     </section>
 
+    <section id="scaleBar" class="hidden bg-studio-900 border border-studio-700/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2">
+        <button id="scaleStageDown" class="px-2.5 py-1 rounded-lg bg-studio-950 border border-studio-700 text-slate-200" aria-label="Earlier scale stage">−</button>
+        <div>
+          <div id="scaleStageLabel" class="text-sm font-semibold text-white">Stage 1</div>
+          <div id="scaleStageMeta" class="text-[11px] text-slate-400"></div>
+        </div>
+        <button id="scaleStageUp" class="px-2.5 py-1 rounded-lg bg-studio-950 border border-studio-700 text-slate-200" aria-label="Later scale stage">+</button>
+      </div>
+      <p class="text-[11px] text-slate-400 max-w-sm">Chopin's order: B, D♭ and F♯ first, C last. One octave up and back. A wrong note counts, then keep going from where you were.</p>
+    </section>
+
     <section id="subBarIntervals" class="hidden bg-studio-900/70 border border-studio-700/60 rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-2 text-xs">
         <span class="text-slate-400">Presentation</span>
@@ -194,7 +207,24 @@
         <p id="chordDetail" class="mt-2 text-slate-600"></p>
         <div id="chordSteps" class="mt-4 flex flex-wrap justify-center gap-2"></div>
         <p id="chordGroove" class="mt-3 text-xs text-slate-500"></p>
+        <p id="chordExplanation" class="mt-3 text-sm text-slate-600 max-w-xl mx-auto"></p>
+        <p id="chordNotes" class="mt-2 text-sm font-mono text-indigo-700"></p>
+        <button id="hearChordBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-800">Hear shape</button>
+        <button id="recallChordBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white">Try from memory</button>
+        <button id="nextChordBtn" class="hidden mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-800">Next shape</button>
         <button id="peekChordBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white">Peek shape</button>
+      </div>
+      <div id="scaleFace" class="hidden px-4 sm:px-8 pt-2 pb-8 text-center">
+        <p id="scaleEyebrow" class="text-sm text-slate-500"></p>
+        <p id="scaleTitle" class="text-4xl sm:text-5xl font-bold text-slate-900 tracking-tight mt-1"></p>
+        <p id="scaleDetail" class="mt-2 text-slate-600"></p>
+        <div id="scaleSteps" class="mt-4 flex flex-wrap justify-center gap-1.5"></div>
+        <p id="scaleExplanation" class="mt-3 text-sm text-slate-600 max-w-xl mx-auto"></p>
+        <p id="scaleFingering" class="mt-2 text-sm font-mono text-indigo-700"></p>
+        <button id="hearScaleBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-800">Hear scale</button>
+        <button id="recallScaleBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 text-white">Try from memory</button>
+        <button id="nextScaleBtn" class="hidden mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-800">Next scale</button>
+        <button id="peekScaleBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white">Show scale</button>
       </div>
       <div id="countFace" class="hidden px-2 sm:px-4 pt-1 pb-4">
         <p id="countHint" class="px-2 sm:px-3 text-xs text-slate-500"></p>
@@ -271,15 +301,15 @@
       <div class="px-5 py-4 border-b border-studio-700 flex items-center justify-between">
         <div>
           <h2 class="text-lg font-bold text-white">Heat map</h2>
-          <p class="text-xs text-slate-400">Green is fluent. Amber is solid. Rose is still slow. Empty has not been met.</p>
+          <p class="text-xs text-slate-400">Green: fluent. Amber: reliable or due for review. Rose: learning. Confidence needs unaided recall across sessions.</p>
         </div>
         <button id="closeHeatmapBtn" class="p-2 rounded-xl bg-studio-800 text-slate-300" aria-label="Close">✕</button>
       </div>
       <div class="flex-1 overflow-y-auto p-5 space-y-6">
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Notes mastered</div><div id="hmMasteredCount" class="text-xl font-bold font-mono text-emerald-400 mt-1">0</div></div>
+          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Notes reliable</div><div id="hmMasteredCount" class="text-xl font-bold font-mono text-emerald-400 mt-1">0</div></div>
           <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Chords met</div><div id="hmChordCount" class="text-xl font-bold font-mono text-white mt-1">0</div></div>
-          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Accuracy</div><div id="hmAccuracy" class="text-xl font-bold font-mono text-indigo-300 mt-1">--%</div></div>
+          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Note accuracy · lifetime</div><div id="hmAccuracy" class="text-xl font-bold font-mono text-indigo-300 mt-1">--%</div></div>
           <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Clef flips</div><div id="hmClefFlips" class="text-xl font-bold font-mono text-amber-400 mt-1">0</div></div>
         </div>
         <div>
@@ -295,8 +325,16 @@
           <div id="hmIntervalGrid" class="grid grid-cols-4 sm:grid-cols-7 gap-2"></div>
         </div>
         <div>
+          <h3 class="text-sm font-semibold text-white mb-2">Chunk playback · individual steps</h3>
+          <div id="hmChunkGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-2"></div>
+        </div>
+        <div>
           <h3 class="text-sm font-semibold text-white mb-2">Chords in the open stages</h3>
           <div id="hmChordGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-white mb-2">Scales in the open stages</h3>
+          <div id="hmScaleGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
         </div>
       </div>
       <div class="px-5 py-3.5 border-t border-studio-700 flex flex-wrap items-center justify-between gap-2">

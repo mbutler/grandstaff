@@ -17,10 +17,6 @@ function pitchClasses(notes: readonly number[]): number[] {
   return notes.map((note) => note % 12).sort((a, b) => a - b);
 }
 
-function lowestPitchClass(notes: readonly number[]): number {
-  return Math.min(...notes) % 12;
-}
-
 /** `held` is a subset of `target`, allowing duplicate pitch classes in neither. */
 function isSubMultiset(held: readonly number[], target: readonly number[]): boolean {
   const remaining = [...target];
@@ -42,7 +38,8 @@ export function judgeGrip(held: readonly number[], target: readonly number[], ex
   const targetPcs = pitchClasses(want);
   if (down.some((note) => !targetPcs.includes(note % 12))) return "miss";
 
-  const sameShape = sameNumbers(heldPcs, targetPcs) && lowestPitchClass(down) === lowestPitchClass(want);
+  const shift = down[0]! - want[0]!;
+  const sameShape = down.length === want.length && shift % 12 === 0 && down.every((note, i) => note - want[i]! === shift);
   if (!exactOctave) {
     if (sameShape) return "match";
     if (isSubMultiset(heldPcs, targetPcs) && down.length < want.length) return "pending";
@@ -50,7 +47,7 @@ export function judgeGrip(held: readonly number[], target: readonly number[], ex
   }
 
   if (sameShape) return "octave";
-  if (down.every((note) => want.includes(note))) return "pending";
+  if (down.length < want.length && isSubMultiset(heldPcs, targetPcs)) return "pending";
   return "miss";
 }
 

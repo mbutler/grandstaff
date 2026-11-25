@@ -2,6 +2,7 @@
 // attack cell. The pale bar is the written length. The solid bar grows only
 // as far as the syllables already said.
 
+import { noteValue } from "./notation";
 import { beamGroups, countedLength, EIGHTH_SYLLABLES, type CountCard, type CountSpan } from "./ruler";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -79,11 +80,14 @@ function drawSpanBar(layer: SVGGElement, span: CountSpan, cursor: number, abando
 function notehead(layer: SVGGElement, span: CountSpan): void {
   const x = centerX(span.start);
   const y = noteY(span.d);
-  if ((span.d - 30) % 2 === 0 && (span.d < 30 || span.d > 38)) {
-    layer.append(el("line", { x1: x - 12, y1: y, x2: x + 12, y2: y, stroke: "#1e293b", "stroke-width": 1.3 }));
-  }
+  for (let d = 28; d >= span.d; d -= 2) layer.append(el("line", { x1: x - 12, y1: noteY(d), x2: x + 12, y2: noteY(d), stroke: "#1e293b", "stroke-width": 1.3 }));
+  for (let d = 40; d <= span.d; d += 2) layer.append(el("line", { x1: x - 12, y1: noteY(d), x2: x + 12, y2: noteY(d), stroke: "#1e293b", "stroke-width": 1.3 }));
+  const value = noteValue(span.length);
   layer.append(el("ellipse", {
-    cx: x, cy: y, rx: 7.1, ry: 5.1, fill: "#0f172a", transform: `rotate(-18 ${x} ${y})`,
+    cx: x, cy: y, rx: value.stem ? 7.1 : 8.5, ry: 5.1,
+    fill: value.hollow ? "#fcfbf7" : "#0f172a", stroke: "#0f172a",
+    "stroke-width": value.hollow ? 2 : 0,
+    transform: `rotate(${value.stem ? -18 : 0} ${x} ${y})`,
   }));
 }
 
@@ -98,14 +102,14 @@ function stemX(span: CountSpan, up: boolean): number {
 
 /** Eighth = one hook, sixteenth = two. The ruler's shortest note is an eighth. */
 function hooksFor(span: CountSpan): number {
-  return span.length === 1 ? 1 : 0;
+  return noteValue(span.length).flags;
 }
 
 /** One stroked hook. A sixteenth draws this twice, a staff-space apart, so the hooks never fuse. */
 function flagCurve(sx: number, tip: number, up: boolean): string {
   const s = up ? 1 : -1;
   const at = (dx: number, dy: number) => `${(sx + dx).toFixed(1)} ${(tip + s * dy).toFixed(1)}`;
-  return `M ${at(0, 0)} C ${at(8, 3)} ${at(16, 12)} ${at(9, 23)}`;
+  return `M ${at(0, 0)} C ${at(3, 6)} ${at(13, 7)} ${at(13, 15)} C ${at(13, 20)} ${at(10, 24)} ${at(7, 27)} C ${at(11, 18)} ${at(10, 15)} ${at(5, 12)} L ${at(0, 9)} Z`;
 }
 
 function drawFlags(layer: SVGGElement, sx: number, tip: number, up: boolean, hooks: number): void {
@@ -113,9 +117,8 @@ function drawFlags(layer: SVGGElement, sx: number, tip: number, up: boolean, hoo
     const at = up ? tip + hook * FLAG_STEP : tip - hook * FLAG_STEP;
     layer.append(el("path", {
       d: flagCurve(sx, at, up),
-      fill: "none",
-      stroke: "#0f172a",
-      "stroke-width": 2.15,
+      fill: "#0f172a",
+      stroke: "none",
       "stroke-linecap": "round",
     }));
   }
@@ -129,8 +132,8 @@ function drawSingle(layer: SVGGElement, span: CountSpan): void {
   const reach = 36 + Math.max(0, hooks - 1) * FLAG_STEP;
   const tip = up ? y - reach : y + reach;
   notehead(layer, span);
-  layer.append(el("line", { x1: x, y1: y, x2: x, y2: tip, stroke: "#0f172a", "stroke-width": STEM, "stroke-linecap": "butt" }));
-  if (span.length >= 3 && span.length % 2 === 1) {
+  if (noteValue(span.length).stem) layer.append(el("line", { x1: x, y1: y, x2: x, y2: tip, stroke: "#0f172a", "stroke-width": STEM, "stroke-linecap": "butt" }));
+  if (noteValue(span.length).dotted) {
     const onLine = (span.d - 30) % 2 === 0;
     layer.append(el("circle", { cx: centerX(span.start) + 13, cy: onLine ? y - STEP : y, r: 2.05, fill: "#0f172a" }));
   }

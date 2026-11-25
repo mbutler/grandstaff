@@ -28,7 +28,15 @@ body {
   touch-action: none;
 }
 .piano-white:active, .piano-white.pressed { background-color: #dbeafe !important; transform: translateY(2px); }
-.piano-white.target-key { box-shadow: inset 0 0 0 3px #4f46e5, inset 0 -3px 0 rgba(0,0,0,0.14); }
+.piano-white.target-key {
+  background: linear-gradient(180deg, #eeedff 0%, #d8d5fa 100%) !important;
+  box-shadow: inset 0 0 0 1.5px #8b83d8, inset 0 -4px 0 #aaa3e5;
+}
+.piano-white.target-key::after, .piano-black.target-key::after {
+  content: ""; position: absolute; bottom: 18%; left: calc(50% - 3px);
+  width: 6px; height: 6px; border-radius: 50%; background: #6255b5;
+}
+.piano-white.target-key.pressed { background: #b9d8ed !important; }
 
 .piano-black {
   transition: background-color 0.08s ease, transform 0.06s ease;
@@ -36,7 +44,12 @@ body {
   touch-action: none;
 }
 .piano-black:active, .piano-black.pressed { background-color: #3b82f6 !important; transform: translateY(2px); }
-.piano-black.target-key { box-shadow: inset 0 0 0 2px #c7d2fe; }
+.piano-black.target-key {
+  background: linear-gradient(180deg, #514a81, #7466ae) !important;
+  box-shadow: inset 0 0 0 1.5px #b5aade, 0 3px 5px #0005;
+}
+.piano-black.target-key::after { background: #eee9ff; }
+.piano-black.target-key.pressed { background: #397da8 !important; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: #11151c; }
@@ -44,6 +57,8 @@ body {
 
 .step-pill { min-width: 3.5rem; }
 .step-pill.current { background: #4f46e5; color: white; border-color: transparent; }
+.scale-pill { min-width: 1.75rem; }
+.scale-pill.current { background: #4f46e5; color: white; border-color: transparent; }
 
 .lens-btn {
   padding: 0.25rem 0.65rem;

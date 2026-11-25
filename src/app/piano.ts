@@ -46,6 +46,7 @@ export function renderPiano(
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.midi = String(key.midi);
+    button.setAttribute("aria-label", `${key.name}${Math.floor(key.midi / 12) - 1}`);
     button.className = "piano-white relative flex-1 h-full bg-slate-50 border-r border-slate-300 last:border-r-0 rounded-b-lg flex flex-col items-center justify-end pb-2 focus:outline-none";
     const showLabel = options.labels === "all" || (options.labels === "c-only" && key.name === "C");
     if (showLabel) {
@@ -72,6 +73,7 @@ export function renderPiano(
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.midi = String(key.midi);
+    button.setAttribute("aria-label", `${key.name}${Math.floor(key.midi / 12) - 1}`);
     const left = (key.after + 1) * whiteWidth;
     const width = whiteWidth * 0.62;
     button.style.left = `calc(${left}% - ${width / 2}%)`;
