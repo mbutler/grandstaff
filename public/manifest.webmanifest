@@ -1,12 +1,12 @@
 {
-  "name": "Chord Practice",
-  "short_name": "Chords",
-  "description": "Spaced-repetition practice for Piano For All chords, inversions and progressions.",
+  "name": "Piano",
+  "short_name": "Piano",
+  "description": "Sight-reading, chords, and counting practice for the piano.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f7f3ec",
-  "theme_color": "#f7f3ec",
+  "background_color": "#0b0e13",
+  "theme_color": "#0b0e13",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },

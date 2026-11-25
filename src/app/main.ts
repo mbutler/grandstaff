@@ -1,474 +1,891 @@
-import { rhythmFor, RhythmPlayer } from "./rhythm";
-import type { Card, ChordCard, Deck, Inversion, ProgressionCard, Voicing } from "../types";
-import { inversionLabel, INVERSION_LABELS } from "../types";
-import { STAGES } from "../deck/stages";
-import { CATEGORY_FILTERS } from "../deck/categories";
-import { keyboardSvg, rangeFor } from "./keyboard";
-import { currentLevel, formatInterval, GRADES, isActive, Session } from "./scheduler";
+import { bindMute, playPiano, playWrong, unlockAudio } from "./audio";
+import { flashKey, isSharpPitch, markTargets, pitchName, renderPiano, setKeyDown, STAFF_HI, STAFF_LO, staffHints } from "./piano";
+import { rangeFor } from "./keyboard";
 import {
-  emptyData, exportBackup, importBackup, load, requestPersistence, save,
-  type PromptStyle, type SaveData,
-} from "./store";
+  averageMs, BUDGET, emptySave, heatBand, introCount, isMastered, loadSave, noteIntroduction, overlapMs, parseSave, pickWeighted,
+  practiceMs, remember, recordAttempt, touchIntro, writeSave, type HeatBand, type Kind, type Save,
+} from "../adapt/memory";
+import { judgeGrip, octaveDirection } from "../chords/grip";
+import { chordPool, stageCounts } from "../chords/pool";
+import { STAGES } from "../deck/stages";
+import { CATALOG, isClefFlip, LETTERS, notesForTier } from "../staff/catalog";
+import { drawLandmarks, drawPrompt, drawStaticStaff } from "../staff/draw";
+import { chunkPrompt, intervalPrompt, notePrompt, type StaffPrompt } from "../staff/prompt";
+import { inversionLabel, type Card, type Deck } from "../types";
 
-// ── State ────────────────────────────────────────────────────────────────
+const MOUSE_OFFSET_MS = 250;
+const HOME_ROW: Record<string, { letter: string; sharp: boolean; midi: number }> = {
+  a: { letter: "C", sharp: false, midi: 60 }, w: { letter: "C#", sharp: true, midi: 61 },
+  s: { letter: "D", sharp: false, midi: 62 }, e: { letter: "D#", sharp: true, midi: 63 },
+  d: { letter: "E", sharp: false, midi: 64 }, f: { letter: "F", sharp: false, midi: 65 },
+  t: { letter: "F#", sharp: true, midi: 66 }, g: { letter: "G", sharp: false, midi: 67 },
+  y: { letter: "G#", sharp: true, midi: 68 }, h: { letter: "A", sharp: false, midi: 69 },
+  u: { letter: "A#", sharp: true, midi: 70 }, j: { letter: "B", sharp: false, midi: 71 },
+  k: { letter: "C", sharp: false, midi: 72 },
+};
 
+let save: Save = emptySave();
 let deck: Card[] = [];
-let data: SaveData = load();
-let session: Session | null = null;
+let pianoSig = "";
+const held = new Set<number>();
+const pointerHeld = new Set<number>();
 
-/** The card on screen and what its randomised front asked for. */
-interface Showing {
-  card: Card;
-  inversion: Inversion;   // chord cards: which inversion to play
-  style: string;          // progression cards: rhythm modifier
-  revealed: boolean;
-  shownAt: number;
-  answerMs: number;
-}
-let showing: Showing | null = null;
-const rhythmPlayer = new RhythmPlayer();
-let rhythmTempo = 72;
-let rhythmPlaying = false;
-function stopRhythm() {
-  rhythmPlayer.stop(); rhythmPlaying = false;
-  document.querySelectorAll(".rhythm-cell.active").forEach((el) => el.classList.remove("active"));
-  const button = document.querySelector<HTMLButtonElement>("[data-action=listen]");
-  if (button) button.textContent = "Listen to rhythm";
-}
+const session = {
+  prompt: null as StaffPrompt | null,
+  chunkIndex: 0,
+  chunkVisible: true,
+  chunkTimer: 0,
+  chunkFrame: 0,
+  advancing: false,
+  hadMistake: false,
+  promptStart: 0,
+  lastNoteId: null as string | null,
+  card: null as Card | null,
+  step: 0,
+  stepTimes: [] as number[],
+  spoiled: false,
+  recorded: false,
+  armed: true,
+  stepStart: 0,
+  lastCardId: null as string | null,
+};
 
-const app = document.getElementById("app")!;
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const pick = <T,>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)]!;
+const $ = <T extends Element = HTMLElement>(id: string) => document.getElementById(id) as unknown as T;
 
-// ── Routing ──────────────────────────────────────────────────────────────
-
-type Route = "home" | "study" | "library" | "settings";
-
-function go(route: Route, arg?: string) {
-  location.hash = arg ? `${route}/${encodeURIComponent(arg)}` : route;
+function persist(): void {
+  writeSave(save);
 }
 
-function render() {
-  stopRhythm();
-  const [route, arg] = location.hash.slice(1).split("/");
-  window.scrollTo(0, 0);
-  switch (route) {
-    case "study": return renderStudy();
-    case "library": return renderLibrary(arg ? decodeURIComponent(arg) : undefined);
-    case "settings": return renderSettings();
-    default: return renderHome();
-  }
+function adjustLatency(raw: number, pointer: boolean): number {
+  if (!pointer || !save.settings.mouseCompensation) return raw;
+  return Math.max(150, raw - MOUSE_OFFSET_MS);
 }
 
-window.addEventListener("hashchange", render);
+const hiddenSpans: { start: number; end: number }[] = [];
+let hiddenAt: number | null = null;
 
-// ── Shared pieces ────────────────────────────────────────────────────────
-
-function topBar(title: string, right = ""): string {
-  return `<header class="bar">
-    <button class="link" data-go="home" aria-label="Home">‹ Home</button>
-    <h1>${esc(title)}</h1>
-    <div class="bar-right">${right}</div>
-  </header>`;
+function awaySince(since: number, until = performance.now()): number {
+  const spans = hiddenAt === null ? hiddenSpans : [...hiddenSpans, { start: hiddenAt, end: until }];
+  return overlapMs(since, until, spans);
 }
 
-function voicingTile(v: Voicing, opts: { roman?: string; highlight?: boolean; heldFrom?: Voicing; motion?: string; range: { lo: number; hi: number } }): string {
-  const dots = v.midi.map((m, i) => ({ midi: m, label: v.names[i]!, held: opts.heldFrom?.midi.includes(m) }));
-  return `<figure class="tile${opts.highlight ? " asked" : ""}">
-    <figcaption>
-      <span class="sym">${esc(v.symbol)}</span>${opts.roman ? `<span class="roman">${esc(opts.roman)}</span>` : ""}
-      <span class="inv">${esc(inversionLabel(v.inversion))}</span>
-    </figcaption>
-    ${keyboardSvg(dots, opts.range, `${v.symbol}: ${v.names.join(" ")}`)}
-    ${opts.motion ? `<p class="motion">${opts.motion}</p>` : ""}
-  </figure>`;
+function activeMs(since: number, until = performance.now()): number {
+  return Math.max(0, until - since - awaySince(since, until));
 }
 
-function motionText(card: ProgressionCard, i: number): string {
-  const m = card.motions[i - 1];
-  if (!m) return "";
-  const held = m.held.length ? `Hold <b>${m.held.map(esc).join(" ")}</b>` : "Nothing held";
-  const moves = m.moves.map((x) => `${esc(x.from)}→${esc(x.to)}`).join(", ");
-  return `${held}${moves ? ` · ${moves}` : ""}`;
+function scoredMs(since: number, kind: Kind, pointer: boolean): number {
+  return practiceMs(adjustLatency(activeMs(since), pointer), kind);
 }
 
-/** Chord line for the front of a progression card, per the prompt-style setting. */
-function progressionPrompt(card: ProgressionCard, style: PromptStyle): string {
-  const romanOf = new Map(card.symbols.map((s, i) => [s, card.roman[i]!]));
-  const main = style === "roman" ? card.roman : card.symbols;
-  const sub = style === "both" ? card.roman : null;
-
-  if (card.form) {
-    const bars = card.form.map((s) => `<div class="bar-cell"><span>${esc(style === "roman" ? romanOf.get(s)! : s)}</span>${
-      style === "both" ? `<small>${esc(romanOf.get(s)!)}</small>` : ""}</div>`);
-    return `<div class="form">${bars.join("")}</div>`;
-  }
-  return `<p class="chords">${main.map(esc).join(`<span class="arrow">→</span>`)}</p>${
-    sub ? `<p class="chords-sub">${sub.map(esc).join(" → ")}</p>` : ""}`;
-}
-
-// ── Home ─────────────────────────────────────────────────────────────────
-
-const isStandalone = () =>
-  matchMedia("(display-mode: standalone)").matches || (navigator as { standalone?: boolean }).standalone === true;
-
-function renderHome() {
-  session = new Session(deck, data);
-  const c = session.counts();
-  const total = c.learning + c.review + c.new;
-  const active = deck.filter((card) => isActive(card, data));
-  const seen = active.filter((card) => data.cards[card.id]).length;
-
-  const byCategory = CATEGORY_FILTERS.filter((f) => data.settings.categories[f.id] !== false).map((f) => {
-    const cards = deck.filter((card) => card.categoryId === f.id);
-    const started = cards.filter((card) => data.cards[card.id]).length;
-    const pct = Math.round((started / cards.length) * 100);
-    return `<li><span>${esc(f.label)}</span><span class="meter"><span style="width:${pct}%"></span></span><span class="num">${started}/${cards.length}</span></li>`;
-  });
-
-  app.innerHTML = `
-    <main class="home">
-      <h1 class="title">Chord Practice</h1>
-      <p class="subtitle">Piano For All · chords, inversions &amp; progressions</p>
-      ${isStandalone() ? "" : `<p class="notice">Progress is saved in this browser only. To keep it safe, add this page to your Home Screen (Share → Add to Home Screen) and export a backup now and then from Settings.</p>`}
-      <p class="notice">${currentLevel(deck, data) === null ? "All stages introduced · keep practicing your reviews." : `Stage ${currentLevel(deck, data)}: ${esc(STAGES[currentLevel(deck, data)!] ?? "Practice")}<br>Each day fills up to your new-card limit in this order. Easy parks a familiar shape for later and those slots go to the next cards.`}</p>
-      <section class="counts">
-        <div><b class="n-learn">${c.learning}</b><span>Learning</span></div>
-        <div><b class="n-review">${c.review}</b><span>Review</span></div>
-        <div><b class="n-new">${c.new}</b><span>New</span></div>
-      </section>
-      <button class="primary big" data-go="study" ${total ? "" : "disabled"}>${total ? "Start practice" : "All done for today"}</button>
-      <section class="progress">
-        <h2>Cards started <span class="num">${seen} of ${active.length}</span></h2>
-        <ul>${byCategory.join("")}</ul>
-      </section>
-      <nav class="home-nav">
-        <button data-go="library">Library</button>
-        <button data-go="settings">Settings</button>
-      </nav>
-    </main>`;
-}
-
-// ── Study ────────────────────────────────────────────────────────────────
-
-function show(card: Card) {
-  stopRhythm();
-  let inversion: Inversion = 0;
-  let style = "";
-  if (card.kind === "chord") {
-    inversion = card.targetInversion;
-  } else {
-    style = pick(card.styles);
-  }
-  showing = { card, inversion, style, revealed: card.kind === "progression" && !!card.guided, shownAt: Date.now(), answerMs: 0 };
-}
-
-function renderStudy() {
-  if (!session) session = new Session(deck, data);
-  if (!showing) {
-    const next = session.next();
-    if (!next) {
-      app.innerHTML = `${topBar("Practice")}<main class="done"><h2>Done for now</h2><p>Nothing else is due. Come back tomorrow, or later today if you have cards in learning.</p><button class="primary" data-go="home">Home</button></main>`;
+function watchVisibility(): void {
+  hiddenAt = document.hidden ? performance.now() : null;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (hiddenAt === null) hiddenAt = performance.now();
       return;
     }
-    show(next);
-  }
-  const s = showing!;
-  const c = session.counts();
-  const right = `<span class="mini-counts"><span class="n-learn">${c.learning}</span> <span class="n-review">${c.review}</span> <span class="n-new">${c.new}</span></span>
-    <button class="link" data-action="undo" ${session.canUndo() ? "" : "disabled"}>Undo</button>`;
-
-  app.innerHTML = `${topBar(s.card.category, right)}
-    <main class="study">
-      <section class="front">${s.card.kind === "chord" ? chordFront(s.card, s.inversion) : progressionFront(s.card, s.style)}</section>
-      ${s.revealed ? `<section class="back">${s.card.kind === "chord" ? chordBack(s.card, s.inversion) : progressionBack(s.card)}</section>` : ""}
-      <footer class="actions">${s.revealed ? gradeButtons(s.card) : `<button class="primary big" data-action="reveal">Show answer</button>`}</footer>
-    </main>`;
+    if (hiddenAt === null) return;
+    hiddenSpans.push({ start: hiddenAt, end: performance.now() });
+    hiddenAt = null;
+    const keepAfter = performance.now() - 60 * 60 * 1000;
+    while (hiddenSpans.length > 0 && hiddenSpans[0]!.end < keepAfter) hiddenSpans.shift();
+  });
 }
 
-function chordFront(card: ChordCard, inv: Inversion): string {
-  return `<p class="eyebrow">Play this chord</p>
-    <p class="symbol">${esc(card.symbol)}</p>
-    <p class="chip">${esc(inversionLabel(inv))}</p>`;
+function hideFeedback(): void {
+  $("latencyBadge").classList.add("hidden");
+  $("hintBadge").classList.add("hidden");
 }
 
-function chordBack(card: ChordCard, inv?: Inversion): string {
-  const hint = `<p class="hint"><b>${esc(card.quality)}:</b> ${esc(card.hint)}</p>`;
-  const range = rangeFor(card.inversions.flatMap((v) => v.midi));
-  if (inv === undefined) {
-    return `<div class="tiles">${card.inversions.map((v) => voicingTile(v, { range })).join("")}</div>${hint}`;
-  }
-  // The asked-for inversion large, on its own keyboard; the other two as reference.
-  const asked = card.inversions[inv]!;
-  const others = card.inversions.filter((_, i) => i !== inv);
-  return `<div class="tiles solo">${voicingTile(asked, { range: rangeFor(asked.midi), highlight: true })}</div>
-    ${hint}
-    <details><summary class="others-label">Other inversions (reference)</summary>
-    <div class="tiles pair">${others.map((v) => voicingTile(v, { range })).join("")}</div></details>`;
+function showFeedback(latencyMs: number | null, hint: string | null, tone: "emerald" | "amber" | "rose", kind: Kind, compensated = false): void {
+  const latency = $("latencyBadge");
+  const hintEl = $("hintBadge");
+  if (latencyMs !== null) {
+    const rounded = Math.round(latencyMs);
+    const budget = BUDGET[kind];
+    let cls = "bg-emerald-100 text-emerald-800 border border-emerald-300";
+    let label = kind === "chord" ? "Fluent" : "Instant";
+    if (rounded >= budget.amber) { cls = "bg-rose-100 text-rose-800 border border-rose-300"; label = "Slow"; }
+    else if (rounded >= budget.green) { cls = "bg-amber-100 text-amber-800 border border-amber-300"; label = "Solid"; }
+    latency.className = `animate-pop px-2.5 py-0.5 rounded-full font-mono text-xs font-semibold ${cls}`;
+    latency.textContent = compensated ? `${rounded} ms · ${label}` : `${rounded} ms · ${label}`;
+    latency.classList.remove("hidden");
+  } else latency.classList.add("hidden");
+  if (hint) {
+    const colors = {
+      emerald: "bg-emerald-100 text-emerald-800 border border-emerald-300",
+      amber: "bg-amber-100 text-amber-900 border border-amber-300",
+      rose: "bg-rose-100 text-rose-800 border border-rose-300",
+    };
+    hintEl.className = `animate-pop px-2.5 py-0.5 rounded-full text-xs font-semibold ${colors[tone]}`;
+    hintEl.textContent = hint;
+    hintEl.classList.remove("hidden");
+  } else hintEl.classList.add("hidden");
 }
 
-function progressionFront(card: ProgressionCard, style: string): string {
-  return `<p class="eyebrow">${esc(card.name)} · Key of ${esc(card.key)}</p>
-    ${progressionPrompt(card, data.settings.promptStyle)}
-    <p class="chip">Start: ${esc(inversionLabel(card.startInversion))}</p>
-    <p class="chip style">${esc(style)}</p>
-    ${rhythmReference(style)}
-    <p class="help">${card.guided ? "Practice with the diagrams. Grade how comfortably you kept the rhythm through the changes." : "Keep a steady rhythm. These diagrams suggest nearby inversions; other comfortable chord voicings are valid."}</p>`;
+function shake(): void {
+  const el = $("staffContainer");
+  el.classList.remove("animate-shake");
+  void el.offsetWidth;
+  el.classList.add("animate-shake");
 }
 
-function rhythmReference(style: string): string {
-  const rhythm = rhythmFor(style);
-  return `<section class="rhythm-reference" aria-label="Rhythm reference">
-    <div class="row"><button data-action="listen">Listen to rhythm</button>
-    <label>Tempo <select id="rhythm-tempo" aria-label="Rhythm tempo">${[48, 60, 72, 90, 110, 130].map((bpm) => `<option value="${bpm}" ${bpm === rhythmTempo ? "selected" : ""}>${bpm} BPM</option>`).join("")}</select></label></div>
-    <p class="help">One bar of count-in, then two bars on C major. Follow the clicks. This is a practice example of the style.</p>
-    <div class="rhythm-grid" style="--pulses:${rhythm.count.length}">${rhythm.count.map((count, i) => `<div class="rhythm-cell" data-pulse="${i}"><b>${count}</b><span>${rhythm.cells[i]}</span></div>`).join("")}</div>
-    <p>${esc(rhythm.description)}</p><p class="help" id="rhythm-status" role="status"></p>
-  </section>`;
+function headerStats(): void {
+  const area = save.settings.app === "chords" ? "chords" : "staff";
+  const rows = save.recent.filter((row) => row.area === area);
+  const good = rows.filter((row) => row.correct);
+  const avg = good.length ? Math.round(good.reduce((sum, row) => sum + row.ms, 0) / good.length) : null;
+  const acc = rows.length ? Math.round((good.length / rows.length) * 100) : null;
+  const avgText = avg === null ? "-- ms" : `${avg} ms`;
+  const accText = acc === null ? "--%" : `${acc}%`;
+  const flips = String(save.clefFlips);
+  $("hdrAvgMs").textContent = avgText;
+  $("mobAvgMs").textContent = avgText;
+  $("hdrAcc").textContent = accText;
+  $("mobAcc").textContent = accText;
+  $("hdrFlips").textContent = flips;
+  $("mobFlips").textContent = flips;
 }
 
-async function listenRhythm() {
-  if (rhythmPlaying) { stopRhythm(); return; }
-  const style = showing?.card.kind === "progression" ? showing.style : "";
-  if (!style) return;
-  rhythmPlaying = true;
-  const button = document.querySelector<HTMLButtonElement>("[data-action=listen]");
-  if (button) button.textContent = "Stop rhythm";
-  try {
-    const rhythm = rhythmFor(style);
-    await rhythmPlayer.play(rhythm, rhythmTempo, (index) => {
-      document.querySelectorAll(".rhythm-cell.active").forEach((el) => el.classList.remove("active"));
-      document.querySelector(`[data-pulse="${index}"]`)?.classList.add("active");
-    }, stopRhythm);
-  } catch {
-    stopRhythm();
-    const status = document.getElementById("rhythm-status");
-    if (status) status.textContent = "Audio could not start. Try Listen again and check your device volume.";
-  }
+function paintActive(selector: string, attr: string, value: string, on: string, off: string): void {
+  document.querySelectorAll<HTMLElement>(selector).forEach((button) => {
+    button.className = `${button.className.split(" ").filter((token) => !token.startsWith("bg-") && token !== "text-white" && token !== "text-slate-400" && token !== "shadow-sm").join(" ")} ${button.dataset[attr] === value ? on : off}`.replace(/\s+/g, " ").trim();
+  });
 }
 
-function progressionBack(card: ProgressionCard): string {
-  const range = rangeFor(card.steps.flatMap((v) => v.midi));
-  const tiles = card.steps.map((v, i) =>
-    voicingTile(v, { range, roman: card.roman[i], heldFrom: card.steps[i - 1], motion: motionText(card, i) }));
-  return `<div class="tiles steps">${tiles.join("")}</div>
-    <p class="legend"><span class="lg-dot"></span> play <span class="lg-held"></span> held from the previous chord</p>
-    <p class="hint">${esc(card.hint)}</p>`;
+function syncChrome(): void {
+  const { settings } = save;
+  const on = "bg-indigo-600 text-white shadow-sm";
+  const off = "text-slate-400";
+  paintActive(".app-btn", "app", settings.app, on, off);
+  paintActive(".drill-btn", "drill", settings.drill, on, off);
+  paintActive(".tier-btn", "tier", String(settings.tier), "bg-studio-700 text-white", off);
+  paintActive(".input-mode-btn", "input", settings.inputMode, on, off);
+  paintActive(".int-type-btn", "intType", settings.intervalType, on, off);
+  paintActive(".chunk-len-btn", "chunkLen", String(settings.chunkLength), on, off);
+
+  const staff = settings.app === "staff";
+  const chords = settings.app === "chords";
+  $("staffBar").classList.toggle("hidden", !staff);
+  $("chordBar").classList.toggle("hidden", !chords);
+  $("staffFace").classList.toggle("hidden", !staff);
+  $("chordFace").classList.toggle("hidden", !chords);
+  $("countFace").classList.toggle("hidden", settings.app !== "count");
+  $("subBarIntervals").classList.toggle("hidden", !(staff && settings.drill === "intervals"));
+  $("subBarChunks").classList.toggle("hidden", !(staff && settings.drill === "chunks"));
+  $("inputSection").classList.toggle("hidden", settings.app === "count");
+
+  const intervals = staff && settings.drill === "intervals";
+  const showPiano = !intervals && (chords || settings.inputMode === "linear");
+  const showLetters = staff && !intervals && settings.inputMode === "letters";
+  $("inputSelectorBar").classList.toggle("hidden", chords || intervals);
+  $("intervalDeck").classList.toggle("hidden", !intervals);
+  $("intervalDeck").classList.toggle("flex", intervals);
+  $("pianoDeck").classList.toggle("hidden", !showPiano);
+  $("pianoDeck").classList.toggle("flex", showPiano);
+  $("letterDeck").classList.toggle("hidden", !showLetters);
+  $("letterDeck").classList.toggle("flex", showLetters);
+  $("iconSoundOn").classList.toggle("hidden", settings.muted);
+  $("iconSoundOff").classList.toggle("hidden", !settings.muted);
+  ($("toggleLandmarks") as HTMLInputElement).checked = settings.landmarks;
+  ($("toggleAdaptive") as HTMLInputElement).checked = settings.adaptive;
+  ($("toggleExactOctave") as HTMLInputElement).checked = settings.exactOctave;
+  ($("toggleMouseComp") as HTMLInputElement).checked = settings.mouseCompensation;
+  ($("toggleKeyHints") as HTMLInputElement).checked = settings.showKeyHints;
+  ($("pianoLabelMode") as HTMLSelectElement).value = settings.pianoLabelMode;
+  ($("flashSlider") as HTMLInputElement).value = String(settings.flashSec);
+  $("flashVal").textContent = `${settings.flashSec.toFixed(1)}s`;
+  $("inputHelperText").textContent = chords
+    ? "Hold the right-hand shape on your MIDI keyboard. A small roll still counts."
+    : "Play the note on your MIDI keyboard, tap a key, or use the home row.";
+  updatePiano();
+  headerStats();
+  if (chords) paintStage();
 }
 
-function gradeButtons(card: Card): string {
-  const due = session!.preview(card);
-  const guidance = card.kind === "progression" && card.guided
-    ? "Again: could not keep the pattern going · Hard: frequent stops · Good: steady with effort · Easy: comfortable and steady."
-    : "Again: needed the answer · Hard: worked it out with difficulty · Good: correct with some effort · Easy: fluent and comfortable.";
-  return `<p class="help">${guidance}</p><div class="grades">${GRADES.map((g) => `<button class="grade g${g.rating}" data-grade="${g.rating}">
-      <span>${g.label}</span><small>${formatInterval(due[g.rating]!)}</small></button>`).join("")}</div>`;
+function updatePiano(): void {
+  const { settings } = save;
+  const chordRange = settings.app === "chords" && session.card ? rangeFor(gripMidis(session.card)) : null;
+  const lo = chordRange?.lo ?? STAFF_LO;
+  const hi = chordRange?.hi ?? STAFF_HI;
+  const sig = `${settings.app}|${lo}|${hi}|${settings.showKeyHints}|${settings.pianoLabelMode}|${settings.inputMode}|${settings.drill}`;
+  if (sig === pianoSig) return;
+  pianoSig = sig;
+  const keyboard = $("pianoKeyboard");
+  renderPiano(keyboard, lo, hi, {
+    hints: settings.app === "staff" ? staffHints() : new Map(),
+    showHints: settings.app === "staff" && settings.showKeyHints,
+    labels: settings.pianoLabelMode,
+  });
+  if (session.card && save.settings.app === "chords" && session.spoiled) markTargets(currentGrip()?.midi ?? []);
 }
 
-function reveal() {
-  stopRhythm();
-  if (!showing || showing.revealed) return;
-  showing.revealed = true;
-  showing.answerMs = Date.now() - showing.shownAt;
-  renderStudy();
+function paintStage(): void {
+  const stage = save.settings.chordStage;
+  $("stageLabel").textContent = `Stage ${stage} · ${STAGES[stage] ?? "Practice"}`;
+  const counts = stageCounts(deck, stage, save.chords);
+  const introduced = introCount(save.intro, Date.now());
+  $("stageMeta").textContent = `${counts.seen} of ${counts.open} met · ${introduced} new this sitting`;
+  ($("stageDown") as HTMLButtonElement).disabled = stage <= 1;
+  ($("stageUp") as HTMLButtonElement).disabled = stage >= 21;
 }
 
-function grade(rating: number) {
-  if (!showing?.revealed || !session) return;
-  const s = showing;
-  const asked = s.card.kind === "chord" ? INVERSION_LABELS[s.inversion].pfa : s.style;
-  session.grade(s.card, rating as 1 | 2 | 3 | 4, asked, s.answerMs);
-  showing = null;
-  renderStudy();
+function renderStaff(): void {
+  drawPrompt($<SVGGElement>("staffNotesLayer"), session.prompt, {
+    chunkIndex: session.chunkIndex,
+    chunkVisible: session.chunkVisible,
+    color: null,
+  });
 }
 
-function undo() {
-  const card = session?.undo();
-  if (!card) return;
-  show(card);
-  renderStudy();
+function clearChunkTimers(): void {
+  if (session.chunkTimer) window.clearTimeout(session.chunkTimer);
+  if (session.chunkFrame) window.cancelAnimationFrame(session.chunkFrame);
+  session.chunkTimer = 0;
+  session.chunkFrame = 0;
+  $("flashProgressWrap").classList.add("hidden");
 }
 
-// ── Library ──────────────────────────────────────────────────────────────
-
-let libraryQuery = "";
-
-function cardTitle(card: Card): string {
-  return card.kind === "chord" ? card.symbol : `${card.name} in ${card.key}`;
+function startChunkFlash(): void {
+  clearChunkTimers();
+  session.chunkVisible = true;
+  renderStaff();
+  const duration = save.settings.flashSec * 1000;
+  const wrap = $("flashProgressWrap");
+  const bar = $("flashProgressBar");
+  wrap.classList.remove("hidden");
+  bar.style.width = "100%";
+  const t0 = performance.now();
+  const tick = (now: number) => {
+    const pct = Math.max(0, 100 - ((now - t0) / duration) * 100);
+    bar.style.width = `${pct}%`;
+    if (pct > 0 && session.chunkVisible) session.chunkFrame = requestAnimationFrame(tick);
+  };
+  session.chunkFrame = requestAnimationFrame(tick);
+  session.chunkTimer = window.setTimeout(() => {
+    session.chunkVisible = false;
+    wrap.classList.add("hidden");
+    const count = session.prompt?.kind === "chunks" ? session.prompt.notes.length : 0;
+    $("promptBadge").textContent = `Play back note ${session.chunkIndex + 1} of ${count}`;
+    renderStaff();
+  }, duration);
 }
 
-function cardSubtitle(card: Card): string {
-  return card.kind === "chord" ? `${card.quality} · ${inversionLabel(card.targetInversion)}` : `${card.symbols.join(" → ")} · from ${INVERSION_LABELS[card.startInversion].pfa}`;
-}
-
-function renderLibrary(id?: string) {
-  const card = id ? deck.find((c) => c.id === id) : undefined;
-  if (card) {
-    const back = card.kind === "chord" ? chordBack(card, card.targetInversion) : progressionBack(card);
-    app.innerHTML = `${topBar("Library", `<button class="link" data-go="library">All cards</button>`)}
-      <main class="study"><section class="front compact"><p class="eyebrow">${esc(card.category)}</p><p class="symbol small">${esc(cardTitle(card))}</p>
-      ${card.kind === "progression" ? progressionPrompt(card, data.settings.promptStyle) : ""}</section>
-      <section class="back">${back}</section></main>`;
+function nextStaff(): void {
+  clearChunkTimers();
+  session.advancing = false;
+  session.hadMistake = false;
+  hideFeedback();
+  const pool = notesForTier(save.settings.tier);
+  const badge = $("promptBadge");
+  const dir = $("directionBadge");
+  dir.classList.add("hidden");
+  const now = Date.now();
+  if (save.settings.drill === "notes") {
+    const prompt = notePrompt(pool, save.notes, save.settings.adaptive, session.lastNoteId, now);
+    session.prompt = prompt;
+    session.lastNoteId = prompt.note.id;
+    badge.textContent = prompt.note.clef === "treble" ? "Treble · play this note" : "Bass · play this note";
+  } else if (save.settings.drill === "intervals") {
+    const prompt = intervalPrompt(pool, save.settings.intervalType, save.intervals, save.settings.adaptive, now);
+    session.prompt = prompt;
+    badge.textContent = prompt.presentation === "harmonic" ? "Name the stacked interval" : "Name the melodic interval";
+    if (prompt.presentation === "melodic") {
+      dir.textContent = prompt.n2.d > prompt.n1.d ? "Ascending" : "Descending";
+      dir.classList.remove("hidden");
+    }
+  } else {
+    const prompt = chunkPrompt(pool, save.settings.chunkLength);
+    session.prompt = prompt;
+    session.chunkIndex = 0;
+    badge.textContent = `Memorize this ${prompt.notes.length}-note pattern`;
+    session.promptStart = performance.now();
+    startChunkFlash();
     return;
   }
-
-  app.innerHTML = `${topBar("Library")}
-    <main class="library">
-      <input type="search" id="q" placeholder="Search: Gm7, blues, Bb, walkdown…" value="${esc(libraryQuery)}" autocomplete="off" autocapitalize="off" spellcheck="false">
-      <ul id="results" class="results"></ul>
-    </main>`;
-  const input = document.getElementById("q") as HTMLInputElement;
-  const results = document.getElementById("results")!;
-  const update = () => {
-    libraryQuery = input.value;
-    const terms = libraryQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    const matches = deck.filter((c) => {
-      const hay = `${cardTitle(c)} ${cardSubtitle(c)} ${c.category}`.toLowerCase();
-      return terms.every((t) => hay.includes(t));
-    }).slice(0, 80);
-    results.innerHTML = matches.map((c) => `<li><button data-open="${esc(c.id)}"><b>${esc(cardTitle(c))}</b><small>${esc(cardSubtitle(c))}</small></button></li>`).join("")
-      || `<li class="empty">No matches</li>`;
-  };
-  input.addEventListener("input", update);
-  update();
+  session.promptStart = performance.now();
+  renderStaff();
 }
 
-// ── Settings ─────────────────────────────────────────────────────────────
+function noteStat(id: string, correct: boolean, ms: number): void {
+  const scored = practiceMs(ms, "note");
+  save.notes[id] = recordAttempt(save.notes[id], correct, scored, Date.now());
+  remember(save, "staff", correct, scored);
+  persist();
+  headerStats();
+}
 
-function renderSettings() {
-  const s = data.settings;
-  const styleOption = (v: PromptStyle, label: string) =>
-    `<label class="seg"><input type="radio" name="promptStyle" value="${v}" ${s.promptStyle === v ? "checked" : ""}><span>${label}</span></label>`;
+function intervalStat(size: number, correct: boolean, ms: number): void {
+  const id = String(size);
+  const scored = practiceMs(ms, "interval");
+  save.intervals[id] = recordAttempt(save.intervals[id], correct, scored, Date.now());
+  remember(save, "staff", correct, scored);
+  persist();
+  headerStats();
+}
 
-  app.innerHTML = `${topBar("Settings")}
-    <main class="settings">
-      <section>
-        <h2>Daily new cards</h2>
-        <div class="stepper">
-          <button data-step="-5" aria-label="Fewer">−</button><output id="newPerDay">${s.newPerDay}</output><button data-step="5" aria-label="More">+</button>
-        </div>
-        <p class="help">Maximum new cards each day. Easy cards leave the remaining slots for the next shapes. Raise this to move through the deck faster. Reviews are never limited.</p>
-      </section>
-      <section>
-        <h2>Progression prompts</h2>
-        <div class="segmented">${styleOption("symbols", "Chord symbols")}${styleOption("roman", "Roman numerals")}${styleOption("both", "Both")}</div>
-      </section>
-      <section>
-        <h2>What to practice</h2>
-        <ul class="toggles">${CATEGORY_FILTERS.map((f) => {
-          const n = deck.filter((c) => c.categoryId === f.id).length;
-          return `<li><label><input type="checkbox" data-category="${f.id}" ${s.categories[f.id] !== false ? "checked" : ""}><span>${esc(f.label)}</span><small>Tier ${f.tier} · ${n} cards</small></label></li>`;
-        }).join("")}</ul>
-      </section>
-      <section>
-        <h2>Backup</h2>
-        <p class="help">Your progress lives only in this browser. Export a backup now and then; import restores it (replacing what's here).</p>
-        <div class="row">
-          <button data-action="export">Export backup</button>
-          <label class="button">Import backup<input type="file" id="import" accept="application/json,.json" hidden></label>
-        </div>
-        <p class="help" id="persist"></p>
-      </section>
-      <section class="danger">
-        <h2>Reset</h2>
-        <button data-action="reset" class="destructive">Erase all progress</button>
-      </section>
-    </main>`;
+function handleNote(input: { letter: string; sharp: boolean; midi: number | null; pointer: boolean }): void {
+  if (save.settings.app !== "staff" || (save.settings.drill !== "notes" && save.settings.drill !== "chunks")) return;
+  if (session.advancing || !session.prompt) return;
+  const target = session.prompt.kind === "notes" ? session.prompt.note : session.prompt.kind === "chunks" ? session.prompt.notes[session.chunkIndex] : null;
+  if (!target) return;
+  if (input.sharp) {
+    playWrong();
+    shake();
+    showFeedback(null, "Natural note", "rose", "note");
+    return;
+  }
+  const letterOk = input.letter === target.letter;
+  const exact = input.midi !== null && save.settings.exactOctave;
+  const match = exact ? input.midi === target.midi : letterOk;
+  if (exact && letterOk && !match && input.midi !== null) {
+    playPiano(input.midi, 0.35, 0.2);
+    showFeedback(null, input.midi < target.midi ? "Right letter, higher octave" : "Right letter, lower octave", "amber", "note");
+    return;
+  }
+  if (match) {
+    const elapsed = scoredMs(session.promptStart, "note", input.pointer);
+    playPiano(target.midi, 0.85, 0.28);
+    if (session.prompt.kind === "notes") {
+      session.advancing = true;
+      if (!session.hadMistake) noteStat(target.id, true, elapsed);
+      showFeedback(elapsed, target.label, "emerald", "note", input.pointer && save.settings.mouseCompensation);
+      drawPrompt($<SVGGElement>("staffNotesLayer"), session.prompt, { chunkIndex: 0, chunkVisible: true, color: "#059669" });
+      window.setTimeout(nextStaff, 340);
+    } else {
+      const share = activeMs(session.promptStart) / (session.chunkIndex + 1);
+      const chunkMs = practiceMs(Math.max(250, adjustLatency(share, input.pointer)), "note");
+      noteStat(target.id, true, chunkMs);
+      session.chunkIndex++;
+      renderStaff();
+      if (session.prompt.kind === "chunks" && session.chunkIndex >= session.prompt.notes.length) {
+        session.advancing = true;
+        showFeedback(chunkMs, "Chunk complete", "emerald", "note");
+        window.setTimeout(nextStaff, 600);
+      } else {
+        $("promptBadge").textContent = `Play back note ${session.chunkIndex + 1} of ${session.prompt.kind === "chunks" ? session.prompt.notes.length : 0}`;
+        showFeedback(null, `${target.label}`, "emerald", "note");
+      }
+    }
+    return;
+  }
+  playWrong();
+  shake();
+  if (!session.hadMistake) {
+    session.hadMistake = true;
+    noteStat(target.id, false, scoredMs(session.promptStart, "note", false));
+  }
+  if (isClefFlip(target, input.letter)) {
+    save.clefFlips++;
+    persist();
+    headerStats();
+    showFeedback(null, target.clef === "bass" ? "Clef flip — bass" : "Clef flip — treble", "amber", "note");
+  } else showFeedback(null, `Try again (${input.letter})`, "rose", "note");
+}
 
-  document.querySelectorAll<HTMLInputElement>("input[name=promptStyle]").forEach((el) =>
-    el.addEventListener("change", () => { data.settings.promptStyle = el.value as PromptStyle; save(data); }));
-  document.querySelectorAll<HTMLInputElement>("input[data-category]").forEach((el) =>
-    el.addEventListener("change", () => { data.settings.categories[el.dataset.category!] = el.checked; save(data); }));
-  document.getElementById("import")!.addEventListener("change", async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
+function handleInterval(size: number, pointer: boolean): void {
+  if (save.settings.app !== "staff" || save.settings.drill !== "intervals" || session.advancing || session.prompt?.kind !== "intervals") return;
+  const prompt = session.prompt;
+  const elapsed = scoredMs(session.promptStart, "interval", pointer);
+  if (size === prompt.size) {
+    session.advancing = true;
+    if (!session.hadMistake) intervalStat(prompt.size, true, elapsed);
+    const gap = prompt.presentation === "harmonic" ? 0 : 0.24;
+    playPiano(prompt.n1.midi, 0.8, 0.22, 0);
+    playPiano(prompt.n2.midi, 0.8, 0.22, gap);
+    showFeedback(elapsed, intervalName(size), "emerald", "interval", pointer && save.settings.mouseCompensation);
+    drawPrompt($<SVGGElement>("staffNotesLayer"), prompt, { chunkIndex: 0, chunkVisible: true, color: "#059669" });
+    window.setTimeout(nextStaff, 520);
+  } else {
+    playWrong();
+    shake();
+    if (!session.hadMistake) {
+      session.hadMistake = true;
+      intervalStat(prompt.size, false, elapsed);
+    }
+    showFeedback(null, `Not a ${intervalName(size)}`, "rose", "interval");
+  }
+}
+
+function intervalName(size: number): string {
+  if (size === 8) return "octave";
+  const suffix = size === 2 ? "nd" : size === 3 ? "rd" : "th";
+  return `${size}${suffix}`;
+}
+
+function gripMidis(card: Card): number[] {
+  if (card.kind === "chord") return card.inversions[card.targetInversion]!.midi;
+  return card.steps.flatMap((step) => step.midi);
+}
+
+function currentGrip(): { midi: number[]; names: string[]; symbol: string } | null {
+  const card = session.card;
+  if (!card) return null;
+  if (card.kind === "chord") {
+    const voicing = card.inversions[card.targetInversion]!;
+    return { midi: voicing.midi, names: voicing.names, symbol: voicing.symbol };
+  }
+  const voicing = card.steps[session.step];
+  if (!voicing) return null;
+  return { midi: voicing.midi, names: voicing.names, symbol: voicing.symbol };
+}
+
+function paintChord(): void {
+  const card = session.card;
+  const face = $("chordSymbol");
+  if (!card) {
+    face.textContent = "Nothing in this stage";
+    $("chordDetail").textContent = "";
+    $("chordSteps").replaceChildren();
+    return;
+  }
+  const grip = currentGrip();
+  $("directionBadge").classList.add("hidden");
+  if (card.kind === "chord") {
+    $("promptBadge").textContent = "Play this shape";
+    $("chordEyebrow").textContent = card.quality;
+    face.textContent = card.symbol;
+    $("chordDetail").textContent = inversionLabel(card.targetInversion);
+    $("chordSteps").replaceChildren();
+    $("chordGroove").textContent = "";
+  } else {
+    $("promptBadge").textContent = "Play this change";
+    $("chordEyebrow").textContent = `${card.name} · ${card.key}`;
+    face.textContent = grip?.symbol ?? "";
+    $("chordDetail").textContent = `Change ${session.step + 1} of ${card.steps.length} · ${inversionLabel(card.startInversion)}`;
+    $("chordGroove").textContent = card.styles[0] ? `Groove, later: ${card.styles[0]}` : "";
+    const row = $("chordSteps");
+    row.replaceChildren();
+    card.steps.forEach((step, index) => {
+      const pill = document.createElement("span");
+      pill.className = `step-pill px-2 py-1 rounded-lg border text-sm font-semibold ${index === session.step ? "current" : "border-slate-300 text-slate-600"}`;
+      pill.textContent = step.symbol;
+      row.append(pill);
+    });
+  }
+  markTargets(session.spoiled && grip ? grip.midi : []);
+  $("peekChordBtn").textContent = session.spoiled && grip ? grip.names.join(" ") : "Peek shape";
+}
+
+function nextChord(): void {
+  hideFeedback();
+  session.spoiled = false;
+  session.recorded = false;
+  session.step = 0;
+  session.stepTimes = [];
+  session.armed = held.size === 0;
+  session.stepStart = performance.now();
+  const pool = chordPool(deck, save.settings.chordStage, save.chords, introCount(save.intro, Date.now()), save.settings.introCap);
+  if (!pool.length) {
+    session.card = null;
+    paintChord();
+    return;
+  }
+  const chosen = pickWeighted(pool, (id) => save.chords[id], "chord", save.settings.adaptive, session.lastCardId, Date.now());
+  session.card = chosen;
+  session.lastCardId = chosen.id;
+  pianoSig = "";
+  paintChord();
+  updatePiano();
+  paintStage();
+}
+
+function storeChord(correct: boolean, ms: number): void {
+  const card = session.card;
+  if (!card || session.recorded) return;
+  const before = save.chords[card.id]?.attempts ?? 0;
+  const scored = practiceMs(ms, "chord");
+  save.chords[card.id] = recordAttempt(save.chords[card.id], correct, scored, Date.now());
+  save.intro = before === 0 ? noteIntroduction(save.intro, Date.now()) : touchIntro(save.intro, Date.now());
+  remember(save, "chords", correct, scored);
+  session.recorded = true;
+  persist();
+  headerStats();
+  paintStage();
+}
+
+function finishChord(cleanMs: number): void {
+  if (!session.spoiled) storeChord(true, cleanMs);
+  session.advancing = true;
+  showFeedback(cleanMs, "Got it", "emerald", "chord");
+  window.setTimeout(() => {
+    session.advancing = false;
+    nextChord();
+  }, 420);
+}
+
+function onChordMatch(pointer: boolean): void {
+  const grip = currentGrip();
+  if (!grip || session.advancing) return;
+  const elapsed = scoredMs(session.stepStart, "chord", pointer);
+  grip.midi.forEach((midi, index) => playPiano(midi, 0.7, 0.18, index * 0.01));
+  session.stepTimes.push(elapsed);
+  const card = session.card;
+  if (!card) return;
+  const steps = card.kind === "chord" ? 1 : card.steps.length;
+  if (session.step + 1 >= steps) {
+    const avg = session.stepTimes.reduce((sum, ms) => sum + ms, 0) / session.stepTimes.length;
+    session.armed = false;
+    finishChord(avg);
+    return;
+  }
+  session.step++;
+  session.armed = false;
+  paintChord();
+  showFeedback(null, grip.symbol, "emerald", "chord");
+}
+
+function onChordMiss(): void {
+  playWrong();
+  shake();
+  if (!session.recorded) storeChord(false, scoredMs(session.stepStart, "chord", false));
+  session.spoiled = true;
+  showFeedback(null, "Not that shape", "rose", "chord");
+}
+
+function chordNote(midi: number, down: boolean, pointer: boolean): void {
+  if (save.settings.app !== "chords") return;
+  if (!down) {
+    held.delete(midi);
+    pointerHeld.delete(midi);
+    setKeyDown(midi, false);
+    if (held.size === 0) {
+      session.armed = true;
+      if (!session.advancing) session.stepStart = performance.now();
+    }
+    return;
+  }
+  if (!session.card || session.advancing) return;
+  if (down) {
+    held.add(midi);
+    if (pointer) pointerHeld.add(midi);
+    setKeyDown(midi, true);
+    if (!pointer) flashKey(midi);
+    if (!session.armed) return;
+    const grip = currentGrip();
+    if (!grip) return;
+    const result = judgeGrip([...held], grip.midi, save.settings.exactOctave);
+    if (result === "match") onChordMatch(pointer);
+    else if (result === "octave") showFeedback(null, octaveDirection([...held], grip.midi) === "higher" ? "Right shape, higher octave" : "Right shape, lower octave", "amber", "chord");
+    else if (result === "miss") onChordMiss();
+  }
+}
+
+function peekChord(): void {
+  if (!session.card) return;
+  session.spoiled = true;
+  if (!session.recorded) storeChord(false, scoredMs(session.stepStart, "chord", false));
+  paintChord();
+}
+
+function heatClass(band: HeatBand): string {
+  if (band === "green") return "bg-emerald-500/20 border-emerald-500/50 text-emerald-200";
+  if (band === "amber") return "bg-amber-500/20 border-amber-500/50 text-amber-200";
+  if (band === "rose") return "bg-rose-500/20 border-rose-500/50 text-rose-200";
+  return "bg-studio-800/80 border-studio-700 text-slate-400";
+}
+
+function heatCell(title: string, statId: string, bucket: Save["notes"], kind: Kind): HTMLElement {
+  const stat = bucket[statId];
+  const mean = averageMs(stat);
+  const avg = mean === null ? null : Math.round(mean);
+  const cell = document.createElement("div");
+  cell.className = `p-2 rounded-xl border text-center ${heatClass(heatBand(stat, kind))}`;
+  const acc = stat && stat.attempts ? `${Math.round((stat.correct / stat.attempts) * 100)}% · ${stat.attempts}` : "Unseen";
+  cell.innerHTML = `<div class="text-sm font-bold font-mono">${title}</div><div class="text-[11px] font-mono mt-0.5">${avg === null ? "—" : `${avg} ms`}</div><div class="text-[10px] opacity-70">${acc}</div>`;
+  return cell;
+}
+
+function renderHeatmap(): void {
+  let mastered = 0;
+  let attempts = 0;
+  let correct = 0;
+  for (const note of CATALOG.all) {
+    const stat = save.notes[note.id];
+    if (!stat) continue;
+    attempts += stat.attempts;
+    correct += stat.correct;
+    if (isMastered(stat, "note")) mastered++;
+  }
+  $("hmMasteredCount").textContent = `${mastered} / ${CATALOG.all.length}`;
+  const chordSeen = Object.values(save.chords).filter((stat) => stat.attempts > 0).length;
+  $("hmChordCount").textContent = String(chordSeen);
+  $("hmAccuracy").textContent = attempts ? `${Math.round((correct / attempts) * 100)}%` : "--%";
+  $("hmClefFlips").textContent = String(save.clefFlips);
+  const treble = $("hmTrebleGrid");
+  const bass = $("hmBassGrid");
+  treble.replaceChildren();
+  bass.replaceChildren();
+  for (const note of CATALOG.treble) treble.append(heatCell(note.label, note.id, save.notes, "note"));
+  for (const note of CATALOG.bass) bass.append(heatCell(note.label, note.id, save.notes, "note"));
+  const intervals = $("hmIntervalGrid");
+  intervals.replaceChildren();
+  for (let size = 2; size <= 8; size++) intervals.append(heatCell(intervalName(size), String(size), save.intervals, "interval"));
+  const chords = $("hmChordGrid");
+  chords.replaceChildren();
+  const open = deck.filter((card) => card.level <= save.settings.chordStage && (save.chords[card.id]?.attempts ?? 0) > 0).slice(0, 160);
+  for (const card of open) {
+    const title = card.kind === "chord" ? card.symbol : `${card.symbols.join(" ")}`;
+    chords.append(heatCell(title, card.id, save.chords, "chord"));
+  }
+  if (!open.length) {
+    const empty = document.createElement("p");
+    empty.className = "text-xs text-slate-400 col-span-full";
+    empty.textContent = "No chord shapes yet. They show up here after you play them.";
+    chords.append(empty);
+  }
+}
+
+function go(app: Save["settings"]["app"]): void {
+  held.clear();
+  pointerHeld.clear();
+  session.armed = true;
+  save.settings.app = app;
+  persist();
+  hideFeedback();
+  syncChrome();
+  if (app === "staff") nextStaff();
+  else if (app === "chords") nextChord();
+  else {
+    clearChunkTimers();
+    $("promptBadge").textContent = "Counting";
+    $("directionBadge").classList.add("hidden");
+  }
+}
+
+function connectMidi(): void {
+  unlockAudio();
+  const nav = navigator as Navigator & { requestMIDIAccess?: () => Promise<MIDIAccess> };
+  if (!nav.requestMIDIAccess) {
+    $("midiLabel").textContent = "No Web MIDI";
+    showFeedback(null, "This browser has no Web MIDI. Open the page in midiweb.", "amber", "note");
+    return;
+  }
+  void nav.requestMIDIAccess().then((access) => {
+    const attach = () => {
+      const inputs = [...access.inputs.values()];
+      for (const input of inputs) input.onmidimessage = onMidi;
+      const dot = $("midiDot");
+      if (inputs.length) {
+        dot.className = "w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]";
+        $("midiLabel").textContent = inputs[0]!.name || "MIDI piano";
+      } else {
+        dot.className = "w-2 h-2 rounded-full bg-slate-500";
+        $("midiLabel").textContent = "No MIDI device";
+      }
+    };
+    attach();
+    access.onstatechange = attach;
+  }).catch(() => {
+    $("midiLabel").textContent = "MIDI denied";
+  });
+}
+
+function onMidi(event: MIDIMessageEvent): void {
+  const [status = 0, data1 = 0, data2 = 0] = event.data ?? [];
+  const command = status & 0xf0;
+  const down = command === 0x90 && data2 > 0;
+  const up = command === 0x80 || (command === 0x90 && data2 === 0);
+  if (!down && !up) return;
+  if (save.settings.app === "chords") {
+    chordNote(data1, down, false);
+    return;
+  }
+  if (!down || save.settings.app !== "staff") return;
+  const name = pitchName(data1);
+  flashKey(data1);
+  handleNote({ letter: name.replace("#", ""), sharp: isSharpPitch(data1), midi: data1, pointer: false });
+}
+
+function exportBackup(): void {
+  const blob = new Blob([JSON.stringify(save, null, 1)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "piano-practice-backup.json";
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+}
+
+async function loadDeck(): Promise<Card[]> {
+  const embedded = $("deck-data").textContent?.trim() ?? "";
+  if (embedded.startsWith("{")) return (JSON.parse(embedded) as Deck).cards;
+  const response = await fetch(`deck.json?v=${document.documentElement.dataset.build ?? ""}`);
+  return ((await response.json()) as Deck).cards;
+}
+
+function bind(): void {
+  document.querySelectorAll<HTMLElement>(".app-btn").forEach((button) => {
+    button.addEventListener("click", () => go(button.dataset.app as Save["settings"]["app"]));
+  });
+  document.querySelectorAll<HTMLElement>(".drill-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      save.settings.drill = button.dataset.drill as Save["settings"]["drill"];
+      persist();
+      syncChrome();
+      nextStaff();
+    });
+  });
+  document.querySelectorAll<HTMLElement>(".tier-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      save.settings.tier = Number(button.dataset.tier) as Save["settings"]["tier"];
+      persist();
+      syncChrome();
+      nextStaff();
+    });
+  });
+  document.querySelectorAll<HTMLElement>(".input-mode-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      save.settings.inputMode = button.dataset.input as Save["settings"]["inputMode"];
+      persist();
+      syncChrome();
+    });
+  });
+  document.querySelectorAll<HTMLElement>(".int-type-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      save.settings.intervalType = button.dataset.intType as Save["settings"]["intervalType"];
+      persist();
+      syncChrome();
+      nextStaff();
+    });
+  });
+  document.querySelectorAll<HTMLElement>(".chunk-len-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      save.settings.chunkLength = Number(button.dataset.chunkLen) === 4 ? 4 : 3;
+      persist();
+      syncChrome();
+      nextStaff();
+    });
+  });
+  document.querySelectorAll<HTMLElement>(".interval-btn").forEach((button) => {
+    button.addEventListener("click", () => handleInterval(Number(button.dataset.interval), true));
+  });
+  document.querySelectorAll<HTMLElement>(".letter-pad-btn").forEach((button) => {
+    button.addEventListener("click", () => handleNote({ letter: button.dataset.letter ?? "C", sharp: false, midi: null, pointer: true }));
+  });
+  $("peekChunkBtn").addEventListener("click", () => { if (save.settings.drill === "chunks") startChunkFlash(); });
+  $("peekChordBtn").addEventListener("click", peekChord);
+  $("flashSlider").addEventListener("input", (event) => {
+    save.settings.flashSec = Number((event.target as HTMLInputElement).value);
+    $("flashVal").textContent = `${save.settings.flashSec.toFixed(1)}s`;
+    persist();
+  });
+  for (const [id, key] of [
+    ["toggleLandmarks", "landmarks"], ["toggleAdaptive", "adaptive"], ["toggleExactOctave", "exactOctave"],
+    ["toggleMouseComp", "mouseCompensation"], ["toggleKeyHints", "showKeyHints"],
+  ] as const) {
+    $(id).addEventListener("change", (event) => {
+      (save.settings[key] as boolean) = (event.target as HTMLInputElement).checked;
+      persist();
+      if (key === "landmarks") drawLandmarks($<SVGGElement>("staffLandmarkLayer"), save.settings.landmarks);
+      syncChrome();
+    });
+  }
+  $("pianoLabelMode").addEventListener("change", (event) => {
+    save.settings.pianoLabelMode = (event.target as HTMLSelectElement).value as Save["settings"]["pianoLabelMode"];
+    persist();
+    pianoSig = "";
+    syncChrome();
+  });
+  $("muteBtn").addEventListener("click", () => { save.settings.muted = !save.settings.muted; persist(); syncChrome(); });
+  $("midiBtn").addEventListener("click", connectMidi);
+  $("stageDown").addEventListener("click", () => { save.settings.chordStage = Math.max(1, save.settings.chordStage - 1); persist(); nextChord(); syncChrome(); });
+  $("stageUp").addEventListener("click", () => { save.settings.chordStage = Math.min(21, save.settings.chordStage + 1); persist(); nextChord(); syncChrome(); });
+  const modal = $("heatmapModal");
+  $("openHeatmapBtn").addEventListener("click", () => { renderHeatmap(); modal.classList.remove("hidden"); });
+  const close = () => { modal.classList.add("hidden"); $("confirmResetBtn").classList.add("hidden"); $("resetStatsBtn").classList.remove("hidden"); };
+  $("closeHeatmapBtn").addEventListener("click", close);
+  $("heatmapBackdrop").addEventListener("click", close);
+  $("exportBtn").addEventListener("click", exportBackup);
+  $("importFile").addEventListener("change", async (event) => {
+    const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
-    try {
-      const restored = await importBackup(file);
-      if (!confirm(`Replace current progress with this backup (${Object.keys(restored.cards).length} cards studied)?`)) return;
-      data = restored;
-      save(data);
-      session = null;
-      alert("Backup restored.");
-      renderSettings();
-    } catch (err) {
-      alert((err as Error).message);
+    const parsed = parseSave(JSON.parse(await file.text()));
+    if (!parsed) { showFeedback(null, "That file is not a piano backup", "rose", "note"); return; }
+    save = parsed;
+    persist();
+    syncChrome();
+    renderHeatmap();
+    if (save.settings.app === "chords") nextChord(); else if (save.settings.app === "staff") nextStaff();
+  });
+  $("resetStatsBtn").addEventListener("click", () => { $("resetStatsBtn").classList.add("hidden"); $("confirmResetBtn").classList.remove("hidden"); });
+  $("confirmResetBtn").addEventListener("click", () => {
+    const settings = save.settings;
+    save = emptySave();
+    save.settings = settings;
+    persist();
+    headerStats();
+    renderHeatmap();
+    $("confirmResetBtn").classList.add("hidden");
+    $("resetStatsBtn").classList.remove("hidden");
+    if (settings.app === "chords") nextChord(); else nextStaff();
+  });
+
+  $("pianoKeyboard").addEventListener("pointerdown", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-midi]");
+    if (!button) return;
+    event.preventDefault();
+    unlockAudio();
+    const midi = Number(button.dataset.midi);
+    if (save.settings.app === "chords") chordNote(midi, true, true);
+    else {
+      flashKey(midi);
+      handleNote({ letter: pitchName(midi).replace("#", ""), sharp: isSharpPitch(midi), midi, pointer: true });
     }
   });
-  requestPersistence().then((ok) => {
-    const el = document.getElementById("persist");
-    if (el) el.textContent = ok ? "This browser has agreed to keep your data." : "";
+  window.addEventListener("pointerup", () => {
+    for (const midi of [...pointerHeld]) chordNote(midi, false, true);
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+    const tag = (event.target as HTMLElement | null)?.tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+    if (event.key === "Escape") { close(); return; }
+    if (!modal.classList.contains("hidden")) return;
+    unlockAudio();
+    if (save.settings.app === "count") return;
+    if (event.code === "Space" && save.settings.app === "staff" && save.settings.drill === "chunks") {
+      event.preventDefault();
+      startChunkFlash();
+      return;
+    }
+    if (save.settings.app === "staff" && save.settings.drill === "intervals") {
+      const num = Number(event.key);
+      if (num >= 2 && num <= 8) { event.preventDefault(); handleInterval(num, false); }
+      return;
+    }
+    if (save.settings.app === "chords") return;
+    const key = event.key.toLowerCase();
+    if (save.settings.inputMode === "letters" && LETTERS.includes(key.toUpperCase() as (typeof LETTERS)[number])) {
+      event.preventDefault();
+      handleNote({ letter: key.toUpperCase(), sharp: false, midi: null, pointer: false });
+      return;
+    }
+    const mapped = HOME_ROW[key];
+    if (save.settings.inputMode === "linear" && mapped) {
+      event.preventDefault();
+      flashKey(mapped.midi);
+      handleNote({ letter: mapped.letter.replace("#", ""), sharp: mapped.sharp, midi: mapped.midi, pointer: false });
+    }
   });
 }
 
-// ── Events ───────────────────────────────────────────────────────────────
-
-app.addEventListener("click", (e) => {
-  const el = (e.target as HTMLElement).closest<HTMLElement>("button, [data-go]");
-  if (!el || (el as HTMLButtonElement).disabled) return;
-  const d = el.dataset;
-  if (d.go) {
-    if (d.go === "study") showing = null;
-    return go(d.go as Route);
-  }
-  if (d.open) return go("library", d.open);
-  if (d.grade) return grade(Number(d.grade));
-  if (d.step) {
-    data.settings.newPerDay = Math.max(0, Math.min(50, data.settings.newPerDay + Number(d.step)));
-    save(data);
-    document.getElementById("newPerDay")!.textContent = String(data.settings.newPerDay);
-    return;
-  }
-  switch (d.action) {
-    case "listen": return void listenRhythm();
-    case "reveal": return reveal();
-    case "undo": return undo();
-    case "export": return exportBackup(data);
-    case "reset":
-      if (confirm("Erase all progress and settings? This can't be undone (unless you have a backup).")) {
-        data = emptyData();
-        save(data);
-        session = null;
-        go("home");
-      }
-  }
-});
-
-app.addEventListener("change", (event) => {
-  const target = event.target as HTMLSelectElement;
-  if (target.id === "rhythm-tempo") { stopRhythm(); rhythmTempo = Number(target.value); }
-});
-
-// Keyboard shortcuts (iPad Magic Keyboard / desktop): space reveals, 1–4 grade, z undoes.
-document.addEventListener("keydown", (e) => {
-  if (!location.hash.startsWith("#study") || e.metaKey || e.ctrlKey || (e.target as HTMLElement).tagName === "INPUT") return;
-  if ((e.key === " " || e.key === "Enter") && showing && !showing.revealed) { e.preventDefault(); reveal(); }
-  else if (showing?.revealed && ["1", "2", "3", "4"].includes(e.key)) grade(Number(e.key));
-  else if (e.key === "z") undo();
-});
-
-// A new study day may start while the app sits open on the iPad.
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") { stopRhythm(); return; }
-  const fresh = load();
-  if (fresh.today.day !== data.today.day) {
-    data = fresh;
-    session = null;
-    showing = null;
-    render();
-  }
-});
-
-// ── Boot ─────────────────────────────────────────────────────────────────
-
-async function boot() {
+async function boot(): Promise<void> {
+  watchVisibility();
+  save = loadSave();
+  bindMute(() => save.settings.muted);
+  drawStaticStaff($<SVGGElement>("staffStaticLayer"));
+  drawLandmarks($<SVGGElement>("staffLandmarkLayer"), save.settings.landmarks);
+  bind();
   try {
-    const res = await fetch(`deck.json?v=${document.documentElement.dataset.build ?? ""}`);
-    deck = ((await res.json()) as Deck).cards;
+    deck = await loadDeck();
   } catch {
-    app.innerHTML = `<main class="done"><h2>Couldn't load the deck</h2><p>Check that deck.json was uploaded next to index.html.</p></main>`;
-    return;
+    $("promptBadge").textContent = "Could not load the chord deck";
   }
-  render();
+  void navigator.storage?.persist?.();
+  syncChrome();
+  if (save.settings.app === "chords") nextChord();
+  else if (save.settings.app === "staff") nextStaff();
+  else $("promptBadge").textContent = "Counting";
 }
 
-boot();
+void boot();

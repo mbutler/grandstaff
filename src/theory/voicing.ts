@@ -2,7 +2,7 @@
 // moves as little as possible, the way Piano For All teaches progressions.
 
 import type { Inversion, Motion, Voicing } from "../types";
-import { displayName, shapeVoicing, type Quality } from "./shapes";
+import { shapeVoicing, type Quality } from "./shapes";
 
 export interface ChordSpec {
   root: string;
@@ -27,7 +27,7 @@ function shifted(base: { midi: number[]; names: string[] }, octaves: number) {
 }
 
 /** Every inversion × octave of a chord that fits in the right-hand range. */
-export function candidates(c: ChordSpec): Voicing[] {
+function candidates(c: ChordSpec): Voicing[] {
   const out: Voicing[] = [];
   for (const inversion of [0, 1, 2] as Inversion[]) {
     const base = shapeVoicing(c.root, c.quality, inversion);
@@ -109,5 +109,3 @@ export function motion(a: Voicing, b: Voicing): Motion {
   const to = b.names.filter((_, i) => !a.midi.includes(b.midi[i]!));
   return { held, moves: from.map((f, i) => ({ from: f, to: to[i]! })) };
 }
-
-export { displayName };

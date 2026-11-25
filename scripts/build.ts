@@ -32,7 +32,8 @@ await cp("public", OUT, { recursive: true });
 const appJs = await readFile(`${OUT}/app.js`);
 const css = await readFile(`${OUT}/styles.css`);
 const build = Bun.hash(Buffer.concat([appJs, css, Buffer.from(JSON.stringify(deck.cards))])).toString(36);
-const html = (await readFile(`${OUT}/index.html`, "utf8")).replaceAll("{{BUILD}}", build);
+const safeDeck = deckJson.replaceAll("<", "\\u003c");
+const html = (await readFile(`${OUT}/index.html`, "utf8")).replaceAll("{{BUILD}}", build).replaceAll("{{DECK}}", safeDeck);
 await writeFile(`${OUT}/index.html`, html);
 
 console.log(`Built ${deck.cards.length} cards → ${OUT}/ (build ${build}, app ${(appJs.length / 1024).toFixed(0)} KB, deck ${(deckJson.length / 1024).toFixed(0)} KB)`);

@@ -1,23 +1,293 @@
 <!doctype html>
-<html lang="en" data-build="{{BUILD}}">
+<html lang="en" class="dark" data-build="{{BUILD}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Chord Practice</title>
-  <meta name="description" content="Spaced-repetition practice for Piano For All chords, inversions and progressions.">
-  <meta name="theme-color" content="#f7f3ec" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1b1917" media="(prefers-color-scheme: dark)">
+  <title>Piano</title>
+  <meta name="description" content="Sight-reading, chords, and soon counting. One adaptive piano practice.">
+  <meta name="theme-color" content="#0b0e13">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Chords">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Piano">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Inter", "system-ui", "sans-serif"], mono: ["JetBrains Mono", "monospace"] },
+          colors: {
+            studio: { 950: "#0b0e13", 900: "#11151c", 800: "#19202b", 700: "#242e3d", 600: "#334155" },
+            paper: { 50: "#fcfbf7", 100: "#f5f2e8", 200: "#e8e2d0" }
+          }
+        }
+      }
+    };
+  </script>
   <link rel="stylesheet" href="styles.css?v={{BUILD}}">
 </head>
-<body>
-  <div id="app"><main class="done"><p>Loading…</p></main></div>
+<body class="min-h-screen flex flex-col selection:bg-indigo-500/30">
+  <header class="sticky top-0 z-30 bg-studio-900/95 backdrop-blur-md border-b border-studio-700/70">
+    <div class="max-w-6xl mx-auto px-3 sm:px-5 py-2.5 flex flex-wrap items-center justify-between gap-2.5">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md shadow-indigo-500/20">
+            <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>
+            </svg>
+          </div>
+          <div>
+            <h1 class="text-sm sm:text-base font-bold tracking-tight text-white leading-none">Piano</h1>
+            <p class="text-[11px] text-slate-400 leading-tight hidden sm:block">Reading, chords, counting</p>
+          </div>
+        </div>
+        <div class="hidden md:flex items-center gap-2 pl-3 border-l border-studio-700">
+          <div class="px-2.5 py-1 rounded-lg bg-studio-800/80 border border-studio-700/70 flex items-center gap-1.5">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400">Avg</span>
+            <span id="hdrAvgMs" class="font-mono text-xs font-semibold text-slate-200">-- ms</span>
+          </div>
+          <div class="px-2.5 py-1 rounded-lg bg-studio-800/80 border border-studio-700/70 flex items-center gap-1.5">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400">Acc</span>
+            <span id="hdrAcc" class="font-mono text-xs font-semibold text-emerald-400">--%</span>
+          </div>
+          <div class="px-2.5 py-1 rounded-lg bg-studio-800/80 border border-studio-700/70 flex items-center gap-1.5" title="Times you read bass as treble or the reverse">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400">Flips</span>
+            <span id="hdrFlips" class="font-mono text-xs font-semibold text-amber-400">0</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center bg-studio-950 p-1 rounded-xl border border-studio-700/80">
+        <button data-app="staff" class="app-btn px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium">Staff</button>
+        <button data-app="chords" class="app-btn px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium">Chords</button>
+        <button data-app="count" class="app-btn px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-medium">Count</button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <button id="midiBtn" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-studio-800 hover:bg-studio-700 border border-studio-700" title="Connect a MIDI keyboard">
+          <span id="midiDot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+          <span id="midiLabel" class="max-w-[110px] truncate">Connect MIDI</span>
+        </button>
+        <button id="muteBtn" class="p-2 rounded-xl bg-studio-800 hover:bg-studio-700 border border-studio-700 text-slate-300" title="Mute">
+          <svg id="iconSoundOn" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+          <svg id="iconSoundOff" class="w-4 h-4 hidden text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+        </button>
+        <button id="openHeatmapBtn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect></svg>
+          <span class="hidden sm:inline">Heat Map</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-5 py-4 sm:py-6 flex flex-col gap-4">
+    <section id="staffBar" class="bg-studio-900 border border-studio-700/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex items-center bg-studio-950 p-0.5 rounded-xl border border-studio-700/70">
+          <button data-drill="notes" class="drill-btn px-2.5 py-1 rounded-lg text-xs font-medium">Notes</button>
+          <button data-drill="intervals" class="drill-btn px-2.5 py-1 rounded-lg text-xs font-medium">Intervals</button>
+          <button data-drill="chunks" class="drill-btn px-2.5 py-1 rounded-lg text-xs font-medium">Chunks</button>
+        </div>
+        <div class="flex items-center bg-studio-950 p-0.5 rounded-xl border border-studio-700/70">
+          <button data-tier="1" class="tier-btn px-2.5 py-1 rounded-lg text-xs font-medium" title="Landmarks and neighbors">T1</button>
+          <button data-tier="2" class="tier-btn px-2.5 py-1 rounded-lg text-xs font-medium" title="Inside the staves">T2</button>
+          <button data-tier="3" class="tier-btn px-2.5 py-1 rounded-lg text-xs font-medium" title="One ledger line">T3</button>
+          <button data-tier="4" class="tier-btn px-2.5 py-1 rounded-lg text-xs font-medium" title="Three ledger lines">T4</button>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-3 text-xs">
+        <label class="flex items-center gap-1.5 text-slate-300"><input id="toggleLandmarks" type="checkbox" class="accent-indigo-500" checked> Landmarks</label>
+        <label class="flex items-center gap-1.5 text-slate-300"><input id="toggleAdaptive" type="checkbox" class="accent-indigo-500" checked> Adaptive</label>
+        <label class="flex items-center gap-1.5 text-slate-300"><input id="toggleExactOctave" type="checkbox" class="accent-emerald-500" checked> Exact octave</label>
+        <label class="flex items-center gap-1.5 text-slate-300" title="Subtract 250ms when you tap the on-screen keys"><input id="toggleMouseComp" type="checkbox" class="accent-indigo-500" checked> Tap offset</label>
+      </div>
+    </section>
+
+    <section id="chordBar" class="hidden bg-studio-900 border border-studio-700/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2">
+        <button id="stageDown" class="px-2.5 py-1 rounded-lg bg-studio-950 border border-studio-700 text-slate-200" aria-label="Earlier stage">−</button>
+        <div>
+          <div id="stageLabel" class="text-sm font-semibold text-white">Stage 1</div>
+          <div id="stageMeta" class="text-[11px] text-slate-400"></div>
+        </div>
+        <button id="stageUp" class="px-2.5 py-1 rounded-lg bg-studio-950 border border-studio-700 text-slate-200" aria-label="Later stage">+</button>
+      </div>
+      <p class="text-[11px] text-slate-400 max-w-sm">Play the right-hand shape. The next new shape joins after you have met the one in front of it.</p>
+    </section>
+
+    <section id="subBarIntervals" class="hidden bg-studio-900/70 border border-studio-700/60 rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2 text-xs">
+        <span class="text-slate-400">Presentation</span>
+        <div class="flex bg-studio-950 p-0.5 rounded-xl border border-studio-700">
+          <button data-int-type="harmonic" class="int-type-btn px-3 py-1 rounded-lg font-medium">Harmonic</button>
+          <button data-int-type="melodic" class="int-type-btn px-3 py-1 rounded-lg font-medium">Melodic</button>
+          <button data-int-type="mixed" class="int-type-btn px-3 py-1 rounded-lg font-medium">Mixed</button>
+        </div>
+      </div>
+      <p class="text-xs text-slate-400">Keys 2–8, or the buttons below.</p>
+    </section>
+
+    <section id="subBarChunks" class="hidden bg-studio-900/70 border border-studio-700/60 rounded-2xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-4 text-xs">
+        <div class="flex bg-studio-950 p-0.5 rounded-xl border border-studio-700">
+          <button data-chunk-len="3" class="chunk-len-btn px-2.5 py-1 rounded-lg font-medium">3 notes</button>
+          <button data-chunk-len="4" class="chunk-len-btn px-2.5 py-1 rounded-lg font-medium">4 notes</button>
+        </div>
+        <label class="flex items-center gap-2 text-slate-400">Flash
+          <input id="flashSlider" type="range" min="0.8" max="3.0" step="0.1" value="1.5" class="w-24 accent-indigo-500">
+          <span id="flashVal" class="font-mono text-indigo-300 w-9">1.5s</span>
+        </label>
+      </div>
+      <button id="peekChunkBtn" class="px-3 py-1 rounded-lg text-xs font-medium bg-studio-800 border border-studio-600 text-slate-200">Peek <span class="text-slate-400">(space)</span></button>
+    </section>
+
+    <section class="relative bg-paper-50 rounded-3xl shadow-2xl shadow-black/50 border border-paper-200 overflow-hidden flex flex-col">
+      <div class="px-4 sm:px-6 pt-3 pb-1 flex items-center justify-between gap-2 text-xs">
+        <div class="flex items-center gap-2 min-w-0">
+          <span id="promptBadge" class="px-2.5 py-0.5 rounded-full bg-slate-900/10 text-slate-700 font-semibold tracking-tight truncate">Play this note</span>
+          <span id="directionBadge" class="hidden px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-semibold"></span>
+        </div>
+        <div id="feedbackArea" class="min-h-[26px] flex items-center justify-end gap-2">
+          <span id="latencyBadge" class="hidden animate-pop px-2.5 py-0.5 rounded-full font-mono text-xs font-semibold"></span>
+          <span id="hintBadge" class="hidden animate-pop px-2.5 py-0.5 rounded-full text-xs font-semibold"></span>
+        </div>
+      </div>
+      <div id="flashProgressWrap" class="hidden px-6 pt-1">
+        <div class="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+          <div id="flashProgressBar" class="h-full bg-indigo-500 rounded-full" style="width:100%"></div>
+        </div>
+      </div>
+      <div id="staffFace">
+        <div id="staffContainer" class="w-full flex items-center justify-center px-2 sm:px-6 py-1 sm:py-2 select-none">
+          <svg id="grandStaffSvg" viewBox="0 0 680 336" class="w-full max-w-[680px] h-auto overflow-visible" aria-label="Grand staff">
+            <g id="staffStaticLayer"></g>
+            <g id="staffLandmarkLayer"></g>
+            <g id="staffNotesLayer"></g>
+          </svg>
+        </div>
+      </div>
+      <div id="chordFace" class="hidden px-4 sm:px-8 pt-2 pb-8 text-center">
+        <p id="chordEyebrow" class="text-sm text-slate-500"></p>
+        <p id="chordSymbol" class="text-5xl sm:text-6xl font-bold text-slate-900 tracking-tight mt-1"></p>
+        <p id="chordDetail" class="mt-2 text-slate-600"></p>
+        <div id="chordSteps" class="mt-4 flex flex-wrap justify-center gap-2"></div>
+        <p id="chordGroove" class="mt-3 text-xs text-slate-500"></p>
+        <button id="peekChordBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white">Peek shape</button>
+      </div>
+      <div id="countFace" class="hidden px-6 py-16 text-center">
+        <p class="text-lg font-semibold text-slate-800">Counting</p>
+        <p class="mt-2 text-sm text-slate-600 max-w-md mx-auto">This mode will call the pulse — 1 e &amp; a — and score where your attack lands. It will use the same memory as staff and chords. The rhythm patterns are already in the project.</p>
+      </div>
+    </section>
+
+    <section id="inputSection" class="bg-studio-900 border border-studio-700/80 rounded-2xl p-3 sm:p-4 flex flex-col gap-3">
+      <div id="inputSelectorBar" class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-studio-800">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs font-medium text-slate-400">Input</span>
+          <div class="flex bg-studio-950 p-0.5 rounded-xl border border-studio-700">
+            <button data-input="linear" class="input-mode-btn px-2.5 py-1 rounded-lg text-xs font-medium">Piano</button>
+            <button data-input="letters" class="input-mode-btn px-2.5 py-1 rounded-lg text-xs font-medium">Letters A–G</button>
+          </div>
+        </div>
+        <div id="pianoControlsWrap" class="flex flex-wrap items-center gap-3 text-xs">
+          <label class="flex items-center gap-1.5 text-slate-400"><input id="toggleKeyHints" type="checkbox" class="accent-indigo-500"> Key hints</label>
+          <label class="flex items-center gap-1.5 text-slate-400">Labels
+            <select id="pianoLabelMode" class="bg-studio-950 border border-studio-700 text-slate-200 rounded-lg px-2 py-1 text-xs">
+              <option value="none" selected>Unlabeled</option>
+              <option value="c-only">C markers</option>
+              <option value="all">All letters</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="pianoDeck" class="flex flex-col items-center gap-2 overflow-x-auto">
+        <div id="pianoKeyboard" class="relative w-full min-w-full max-w-[740px] h-40 sm:h-48 select-none flex rounded-b-xl overflow-hidden bg-studio-950 p-1 border border-studio-700/80"></div>
+        <p id="inputHelperText" class="text-[11px] text-slate-400 text-center">Play the note on your MIDI keyboard, tap a key, or use the home row.</p>
+      </div>
+      <div id="letterDeck" class="hidden flex-col items-center gap-2.5 py-2">
+        <div class="grid grid-cols-7 gap-2 w-full max-w-lg">
+          <button data-letter="C" class="letter-pad-btn py-4 rounded-xl bg-studio-800 border border-studio-600 text-lg font-bold">C</button>
+          <button data-letter="D" class="letter-pad-btn py-4 rounded-xl bg-studio-800 border border-studio-600 text-lg font-bold">D</button>
+          <button data-letter="E" class="letter-pad-btn py-4 rounded-xl bg-studio-800 border border-studio-600 text-lg font-bold">E</button>
+          <button data-letter="F" class="letter-pad-btn py-4 rounded-xl bg-studio-800 border border-studio-600 text-lg font-bold">F</button>
+          <button data-letter="G" class="letter-pad-btn py-4 rounded-xl bg-studio-800 border border-studio-600 text-lg font-bold">G</button>
+          <button data-letter="A" class="letter-pad-btn py-4 rounded-xl bg-studio-800 border border-studio-600 text-lg font-bold">A</button>
+          <button data-letter="B" class="letter-pad-btn py-4 rounded-xl bg-studio-800 border border-studio-600 text-lg font-bold">B</button>
+        </div>
+      </div>
+      <div id="intervalDeck" class="hidden flex-col items-center gap-3 py-2">
+        <div class="grid grid-cols-4 sm:grid-cols-7 gap-2 w-full max-w-2xl">
+          <button data-interval="2" class="interval-btn py-3 rounded-xl bg-studio-800 border border-studio-600 text-white font-bold">2nd</button>
+          <button data-interval="3" class="interval-btn py-3 rounded-xl bg-studio-800 border border-studio-600 text-white font-bold">3rd</button>
+          <button data-interval="4" class="interval-btn py-3 rounded-xl bg-studio-800 border border-studio-600 text-white font-bold">4th</button>
+          <button data-interval="5" class="interval-btn py-3 rounded-xl bg-studio-800 border border-studio-600 text-white font-bold">5th</button>
+          <button data-interval="6" class="interval-btn py-3 rounded-xl bg-studio-800 border border-studio-600 text-white font-bold">6th</button>
+          <button data-interval="7" class="interval-btn py-3 rounded-xl bg-studio-800 border border-studio-600 text-white font-bold">7th</button>
+          <button data-interval="8" class="interval-btn py-3 rounded-xl bg-studio-800 border border-studio-600 text-white font-bold">8ve</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="flex md:hidden items-center justify-center gap-2 text-xs">
+      <div class="px-3 py-1.5 rounded-xl bg-studio-900 border border-studio-700"><span class="text-slate-400">Avg </span><span id="mobAvgMs" class="font-mono text-white">-- ms</span></div>
+      <div class="px-3 py-1.5 rounded-xl bg-studio-900 border border-studio-700"><span class="text-slate-400">Acc </span><span id="mobAcc" class="font-mono text-emerald-400">--%</span></div>
+      <div class="px-3 py-1.5 rounded-xl bg-studio-900 border border-studio-700"><span class="text-slate-400">Flips </span><span id="mobFlips" class="font-mono text-amber-400">0</span></div>
+    </div>
+  </main>
+
+  <div id="heatmapModal" class="fixed inset-0 z-50 hidden">
+    <div id="heatmapBackdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="absolute right-0 top-0 bottom-0 w-full max-w-2xl bg-studio-900 border-l border-studio-700 shadow-2xl flex flex-col">
+      <div class="px-5 py-4 border-b border-studio-700 flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold text-white">Heat map</h2>
+          <p class="text-xs text-slate-400">Green is fluent. Amber is solid. Rose is still slow. Empty has not been met.</p>
+        </div>
+        <button id="closeHeatmapBtn" class="p-2 rounded-xl bg-studio-800 text-slate-300" aria-label="Close">✕</button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-5 space-y-6">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Notes mastered</div><div id="hmMasteredCount" class="text-xl font-bold font-mono text-emerald-400 mt-1">0</div></div>
+          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Chords met</div><div id="hmChordCount" class="text-xl font-bold font-mono text-white mt-1">0</div></div>
+          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Accuracy</div><div id="hmAccuracy" class="text-xl font-bold font-mono text-indigo-300 mt-1">--%</div></div>
+          <div class="p-3 rounded-2xl bg-studio-800/80 border border-studio-700"><div class="text-[11px] uppercase text-slate-400">Clef flips</div><div id="hmClefFlips" class="text-xl font-bold font-mono text-amber-400 mt-1">0</div></div>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-white mb-2">Treble</h3>
+          <div id="hmTrebleGrid" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-white mb-2">Bass</h3>
+          <div id="hmBassGrid" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-white mb-2">Intervals</h3>
+          <div id="hmIntervalGrid" class="grid grid-cols-4 sm:grid-cols-7 gap-2"></div>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-white mb-2">Chords in the open stages</h3>
+          <div id="hmChordGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
+        </div>
+      </div>
+      <div class="px-5 py-3.5 border-t border-studio-700 flex flex-wrap items-center justify-between gap-2">
+        <span class="text-xs text-slate-400">Saved in this browser. Add to Home Screen on the iPad.</span>
+        <div class="flex items-center gap-2">
+          <button id="exportBtn" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-studio-800 text-slate-200 border border-studio-600">Export</button>
+          <label class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-studio-800 text-slate-200 border border-studio-600 cursor-pointer">Import<input id="importFile" type="file" accept="application/json" class="hidden"></label>
+          <button id="resetStatsBtn" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30">Reset</button>
+          <button id="confirmResetBtn" class="hidden px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-600 text-white">Erase memory</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script id="deck-data" type="application/json">{{DECK}}</script>
   <script type="module" src="app.js?v={{BUILD}}"></script>
 </body>
 </html>

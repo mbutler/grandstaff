@@ -1,64 +1,23 @@
-# Chord Practice
+# Piano
 
-Spaced-repetition practice for Piano For All chords, inversions and progressions,
-built for an iPad at the piano.
+One practice app for the iPad at the piano, in the GrandStaff studio layout.
 
-- Start with C, G and F major root-position recall, then play C–F–G with a simple
-  rhythm and visible diagrams. Expand through major roots (including B/Bb), minor
-  roots, first inversions, second inversions, and then more advanced shapes.
-- Guided rhythm exercises appear alongside the early chords. Later progression
-  cards use nearby inversions and all the original rhythm styles in every key.
-- Each chord inversion has its own FSRS schedule. Each day fills unused new-card
-  slots in curriculum order, so Easy on familiar shapes brings the next cards in
-  the same session. Difficult cards come back as reviews.
-- Easy lets familiar material advance immediately; Good may require a short learning
-  repeat. The daily new-card setting is how many unseen cards to introduce; unused
-  slots spill into the next stage. Raise it in Settings to move faster. All material
-  remains available in Library.
-- Right-hand shapes follow Piano For All: 7ths and 6ths are 3-note shapes (C7 = Bb E G),
-  with the left hand assumed to play the root.
-- Progression practice includes a rhythm reference: count-in clicks, two bars of
-  synthesized C-major audio, adjustable tempo, and a highlighted beat pattern.
-  These are concrete examples of the style labels, not course transcriptions.
-  Playback stops when you change cards, tempo, or leave the page.
-- Scheduling is FSRS (the algorithm Anki uses), with Again / Hard / Good / Easy.
+- **Staff** — note recall, interval shapes, and flash chunks. Latency, accuracy, and clef flips are saved.
+- **Chords** — Piano For All shapes and progressions. You play the right-hand grip on a MIDI keyboard. The app hears whether it was the written shape, and how long it took.
+- **Count** — reserved for a pulse drill (`1 e & a`). The rhythm patterns already live in `src/app/rhythm.ts`.
 
-## Build & deploy
+There is no daily queue and no Again / Hard / Good / Easy buttons. Each note, interval, and chord keeps one record. Unseen and shaky items come up more often. Fluent ones rest, then return. Notes rest for minutes. Chords rest for longer. A miss brings an item back immediately.
+
+Chords open one curriculum stage at a time. Inside that stage, shapes you have already met stay in the mix, and the next unmet shape joins them. A sitting introduces a handful of new shapes, then reviews, so one long session does not open the whole book. Raising the stage lets the next unmet shape be further along. It does not dump every new card at once.
+
+Progress is stored in this browser under `piano-practice:v1`. The first launch copies note and interval stats from `grandstaff_trainer_stats_v1` when that key exists. Old chord schedules under `chord-practice:v2` are left untouched. Export a backup from the heat map. On the iPad, add the page to the Home Screen so the browser is less likely to clear the data.
+
+Open it in midiweb so the keyboard can connect. Tap **Connect MIDI**.
 
 ```bash
 bun install
+bun test
 bun run build
 ```
 
-Upload everything in `dist/` to any folder on your web server. There's no server-side code.
-
-On the iPad: open the page, then **Share → Add to Home Screen**. This matters.
-Progress is stored in the browser, and iPad browsers can clear site data after about a
-week without visits unless the site is on the Home Screen. Use **Settings → Export backup**
-now and then.
-
-After uploading a new build, reload the page. If your server caches `index.html`
-aggressively, set it to `no-cache`. Everything else is cache-busted automatically.
-
-## Develop
-
-```bash
-bun test            # music theory, deck and scheduler tests
-bun run typecheck
-```
-
-| Path | What it is |
-| --- | --- |
-| `src/theory/shapes.ts` | Piano For All chord shapes and inversions |
-| `src/theory/voicing.ts` | Voice-leading solver (least total finger travel) |
-| `src/deck/definitions.ts` | Curriculum: chord types, progressions, hints, rhythm styles, introduction order |
-| `src/deck/generate.ts` | Expands definitions across 12 keys into `deck.json` |
-| `src/app/` | The web app: scheduler (FSRS), storage, keyboard SVG, screens |
-
-Curriculum v2 starts fresh in a separate browser storage key (`chord-practice:v2`).
-The old v1 data remains untouched. Chord ids now include the inversion
-(`t1_c_maj_root`, `t1_c_maj_bwd`, `t1_c_maj_mid`); old chord histories do not transfer.
-This is a graded learning sequence inspired by the course, not an exact lesson order.
-
-Card ids are stable (`t3_iivi_bb_mid`), and saved progress is keyed on them. Renaming a
-progression id or key slug orphans its history.
+Upload `dist/` and serve it over HTTP. `index.html` already contains the deck, so the page does not need a separate `deck.json` fetch when the script is allowed to run.
