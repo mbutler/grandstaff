@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Piano</title>
-  <meta name="description" content="Sight-reading, chords, and soon counting. One adaptive piano practice.">
+  <meta name="description" content="Sight-reading, chords, and counting. One adaptive piano practice.">
   <meta name="theme-color" content="#0b0e13">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -110,6 +110,21 @@
       </div>
     </section>
 
+    <section id="countBar" class="hidden bg-studio-900 border border-studio-700/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <div id="countTitle" class="text-sm font-semibold text-white">Four quarters</div>
+        <div id="countMeta" class="text-[11px] text-slate-400">Bar 1 of 3 · eighth-note ruler</div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] uppercase tracking-wider text-slate-400">Lens</span>
+        <div class="flex bg-studio-950 p-0.5 rounded-xl border border-studio-700" role="group" aria-label="Counting lens">
+          <button type="button" class="lens-btn" disabled title="These bars sit on the eighth-note ruler.">1 e &amp; a</button>
+          <button type="button" class="lens-btn" aria-pressed="true" title="Eighth notes. & is the second half of each beat.">1 &amp;</button>
+          <button type="button" class="lens-btn" disabled title="Zoom out after the eighths sit evenly.">1 2 3 4</button>
+        </div>
+      </div>
+    </section>
+
     <section id="chordBar" class="hidden bg-studio-900 border border-studio-700/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-2">
         <button id="stageDown" class="px-2.5 py-1 rounded-lg bg-studio-950 border border-studio-700 text-slate-200" aria-label="Earlier stage">−</button>
@@ -181,9 +196,17 @@
         <p id="chordGroove" class="mt-3 text-xs text-slate-500"></p>
         <button id="peekChordBtn" class="mt-4 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white">Peek shape</button>
       </div>
-      <div id="countFace" class="hidden px-6 py-16 text-center">
-        <p class="text-lg font-semibold text-slate-800">Counting</p>
-        <p class="mt-2 text-sm text-slate-600 max-w-md mx-auto">This mode will call the pulse — 1 e &amp; a — and score where your attack lands. It will use the same memory as staff and chords. The rhythm patterns are already in the project.</p>
+      <div id="countFace" class="hidden px-2 sm:px-4 pt-1 pb-4">
+        <p id="countHint" class="px-2 sm:px-3 text-xs text-slate-500"></p>
+        <svg id="countSvg" class="w-full h-auto select-none" role="img" aria-label="One bar on an eighth-note counting ruler"></svg>
+        <div class="px-2 sm:px-3 mt-1 flex flex-wrap items-center justify-between gap-2">
+          <p id="countStatus" class="text-sm text-slate-600 min-h-[2.5rem] flex-1" aria-live="polite"></p>
+          <div class="flex gap-2">
+            <button id="countHear" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-800">Hear</button>
+            <button id="countRetry" type="button" class="hidden px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-700">Start over</button>
+            <button id="countNext" type="button" class="hidden px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white">Next bar</button>
+          </div>
+        </div>
       </div>
     </section>
 

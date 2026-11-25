@@ -44,3 +44,20 @@ body {
 
 .step-pill { min-width: 3.5rem; }
 .step-pill.current { background: #4f46e5; color: white; border-color: transparent; }
+
+.lens-btn {
+  padding: 0.25rem 0.65rem;
+  border-radius: 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: #94a3b8;
+}
+.lens-btn[aria-pressed="true"] { background: #4f46e5; color: white; }
+.lens-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+@keyframes countGap {
+  0%, 100% { fill: #ffe4e6; }
+  50% { fill: #fb7185; }
+}
+.count-gap { animation: countGap 0.75s ease-in-out infinite; }

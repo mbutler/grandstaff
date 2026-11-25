@@ -12,6 +12,7 @@ import { CATALOG, isClefFlip, LETTERS, notesForTier } from "../staff/catalog";
 import { drawLandmarks, drawPrompt, drawStaticStaff } from "../staff/draw";
 import { chunkPrompt, intervalPrompt, notePrompt, type StaffPrompt } from "../staff/prompt";
 import { inversionLabel, type Card, type Deck } from "../types";
+import { enterCount, leaveCount, onCountKey } from "./count";
 
 const MOUSE_OFFSET_MS = 250;
 const HOME_ROW: Record<string, { letter: string; sharp: boolean; midi: number }> = {
@@ -171,6 +172,7 @@ function syncChrome(): void {
   $("staffFace").classList.toggle("hidden", !staff);
   $("chordFace").classList.toggle("hidden", !chords);
   $("countFace").classList.toggle("hidden", settings.app !== "count");
+  $("countBar").classList.toggle("hidden", settings.app !== "count");
   $("subBarIntervals").classList.toggle("hidden", !(staff && settings.drill === "intervals"));
   $("subBarChunks").classList.toggle("hidden", !(staff && settings.drill === "chunks"));
   $("inputSection").classList.toggle("hidden", settings.app === "count");
@@ -637,6 +639,7 @@ function renderHeatmap(): void {
 }
 
 function go(app: Save["settings"]["app"]): void {
+  if (save.settings.app === "count" && app !== "count") leaveCount();
   held.clear();
   pointerHeld.clear();
   session.armed = true;
@@ -648,8 +651,8 @@ function go(app: Save["settings"]["app"]): void {
   else if (app === "chords") nextChord();
   else {
     clearChunkTimers();
-    $("promptBadge").textContent = "Counting";
     $("directionBadge").classList.add("hidden");
+    enterCount();
   }
 }
 
@@ -842,7 +845,7 @@ function bind(): void {
     if (event.key === "Escape") { close(); return; }
     if (!modal.classList.contains("hidden")) return;
     unlockAudio();
-    if (save.settings.app === "count") return;
+    if (save.settings.app === "count") { onCountKey(event); return; }
     if (event.code === "Space" && save.settings.app === "staff" && save.settings.drill === "chunks") {
       event.preventDefault();
       startChunkFlash();
@@ -885,7 +888,7 @@ async function boot(): Promise<void> {
   syncChrome();
   if (save.settings.app === "chords") nextChord();
   else if (save.settings.app === "staff") nextStaff();
-  else $("promptBadge").textContent = "Counting";
+  else enterCount();
 }
 
 void boot();

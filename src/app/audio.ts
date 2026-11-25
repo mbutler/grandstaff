@@ -49,6 +49,24 @@ export function playPiano(midi: number, duration = 0.8, volume = 0.25, delay = 0
   }
 }
 
+export function playClick(accent = false, delay = 0): void {
+  if (isMuted()) return;
+  const ctx = context();
+  if (!ctx) return;
+  const now = ctx.currentTime + delay;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(accent ? 1480 : 920, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(accent ? 0.055 : 0.026, now + 0.003);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.04);
+}
+
 export function playWrong(): void {
   if (isMuted()) return;
   const ctx = context();
